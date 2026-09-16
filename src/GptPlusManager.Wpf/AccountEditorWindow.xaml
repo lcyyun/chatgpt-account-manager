@@ -1,32 +1,84 @@
-<Window x:Class="GptPlusManager.Wpf.AccountEditorWindow"
+﻿<Window x:Class="GptPlusManager.Wpf.AccountEditorWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="编辑账号" Width="560" SizeToContent="Height" ResizeMode="NoResize"
         WindowStartupLocation="CenterOwner" ShowInTaskbar="False">
     <Border Padding="24" Background="{DynamicResource CanvasBrush}">
-        <Grid>
-            <Grid.RowDefinitions>
-                <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/>
-                <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/>
-            </Grid.RowDefinitions>
-            <Grid.ColumnDefinitions><ColumnDefinition Width="86"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+        <StackPanel>
+            <TextBlock x:Name="HeaderText" Text="编辑账号" FontSize="17" FontWeight="SemiBold"/>
 
-            <TextBlock Text="邮箱" Grid.Row="0" Margin="0,11,12,0" Style="{StaticResource SectionLabel}"/>
-            <TextBox x:Name="EmailBox" Grid.Row="0" Grid.Column="1" Style="{StaticResource ModernTextBox}"/>
-            <TextBlock Text="密码" Grid.Row="1" Margin="0,23,12,0" Style="{StaticResource SectionLabel}"/>
-            <TextBox x:Name="PasswordBox" Grid.Row="1" Grid.Column="1" Margin="0,12,0,0" Style="{StaticResource ModernTextBox}"/>
-            <TextBlock Text="2FA 密钥" Grid.Row="2" Margin="0,23,12,0" Style="{StaticResource SectionLabel}"/>
-            <TextBox x:Name="SecretBox" Grid.Row="2" Grid.Column="1" Margin="0,12,0,0" Style="{StaticResource ModernTextBox}"/>
-            <TextBlock Text="购买时间" Grid.Row="3" Margin="0,23,12,0" Style="{StaticResource SectionLabel}"/>
-            <DatePicker x:Name="PurchasedPicker" Grid.Row="3" Grid.Column="1" Margin="0,12,0,0"
-                        Style="{StaticResource ModernDatePicker}" SelectedDateFormat="Short" Language="zh-CN"/>
-            <TextBlock Text="备注" Grid.Row="4" Margin="0,23,12,0" Style="{StaticResource SectionLabel}"/>
-            <TextBox x:Name="NoteBox" Grid.Row="4" Grid.Column="1" Margin="0,12,0,0" Style="{StaticResource ModernTextBox}"/>
+            <!-- 添加模式下的页内分页：手动添加 / 批量导入 -->
+            <StackPanel x:Name="TabsRow" Orientation="Horizontal" Margin="0,14,0,0" Visibility="Collapsed">
+                <RadioButton x:Name="ManualTab" Content="手动添加" GroupName="AddPages" IsChecked="True"
+                             Style="{StaticResource PageTabButton}" Checked="AddTab_Checked"/>
+                <RadioButton x:Name="ImportTab" Content="批量导入" GroupName="AddPages" Margin="6,0,0,0"
+                             Style="{StaticResource PageTabButton}" Checked="AddTab_Checked"/>
+            </StackPanel>
 
-            <StackPanel Grid.Row="5" Grid.ColumnSpan="2" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,24,0,0">
+            <Grid Margin="0,18,0,0">
+                <!-- 手动填写页（编辑模式也使用同一个表单） -->
+                <Grid x:Name="FormPage">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="86"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+
+                    <TextBlock Text="邮箱" Grid.Row="0" Margin="0,11,12,0" Style="{StaticResource SectionLabel}"/>
+                    <TextBox x:Name="EmailBox" Grid.Row="0" Grid.Column="1" Style="{StaticResource ModernTextBox}"/>
+                    <TextBlock Text="密码" Grid.Row="1" Margin="0,23,12,0" Style="{StaticResource SectionLabel}"/>
+                    <TextBox x:Name="PasswordBox" Grid.Row="1" Grid.Column="1" Margin="0,12,0,0" Style="{StaticResource ModernTextBox}"/>
+                    <TextBlock Text="2FA 密钥" Grid.Row="2" Margin="0,23,12,0" Style="{StaticResource SectionLabel}"/>
+                    <TextBox x:Name="SecretBox" Grid.Row="2" Grid.Column="1" Margin="0,12,0,0" Style="{StaticResource ModernTextBox}"/>
+                    <TextBlock Text="购买时间" Grid.Row="3" Margin="0,23,12,0" Style="{StaticResource SectionLabel}"/>
+                    <DatePicker x:Name="PurchasedPicker" Grid.Row="3" Grid.Column="1" Margin="0,12,0,0"
+                                Style="{StaticResource ModernDatePicker}" SelectedDateFormat="Short" Language="zh-CN"/>
+                    <TextBlock Text="备注" Grid.Row="4" Margin="0,23,12,0" Style="{StaticResource SectionLabel}"/>
+                    <TextBox x:Name="NoteBox" Grid.Row="4" Grid.Column="1" Margin="0,12,0,0" Style="{StaticResource ModernTextBox}"/>
+                </Grid>
+
+                <!-- 批量导入页 -->
+                <Grid x:Name="ImportPage" Visibility="Collapsed">
+                    <StackPanel>
+                        <TextBlock Text="粘贴 JSON 备份，或每行「邮箱 | 密码 | 密钥」；也可从文件选择。已存在的邮箱只更新填写的字段，不会清空已有密码或密钥。"
+                                   Style="{StaticResource MutedText}" TextWrapping="Wrap"/>
+                        <TextBox x:Name="ImportTextBox" Height="190" Margin="0,10,0,0" AcceptsReturn="True" TextWrapping="NoWrap"
+                                 VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto"
+                                 FontFamily="Consolas" Style="{StaticResource ModernTextBox}"/>
+                        <StackPanel Orientation="Horizontal" Margin="0,12,0,0">
+                            <Button Content="从文件选择…" Style="{StaticResource ModernButton}" Padding="11,6" Click="PickFile_Click"/>
+                            <Button Content="开始导入" Style="{StaticResource PrimaryButton}" Padding="14,6" Margin="8,0,0,0" Click="Import_Click"/>
+                        </StackPanel>
+                        <Button Style="{StaticResource FlatFieldButton}" HorizontalAlignment="Left" Margin="0,6,0,0"
+                                ToolTip="打开导出目录" Click="OpenFolder_Click">
+                            <StackPanel Orientation="Horizontal">
+                                <Viewbox Width="13" Height="13" Margin="0,0,6,0"><Path Data="{StaticResource IconFolder}" Fill="{DynamicResource MutedBrush}"/></Viewbox>
+                                <TextBlock x:Name="DirectoryText" Style="{StaticResource MutedText}" MaxWidth="420" TextTrimming="CharacterEllipsis"/>
+                            </StackPanel>
+                        </Button>
+                    </StackPanel>
+                </Grid>
+            </Grid>
+
+            <TextBlock x:Name="AddStatus" TextWrapping="Wrap" Margin="0,14,0,0" Visibility="Collapsed"/>
+
+            <!-- 编辑模式的按钮 -->
+            <StackPanel x:Name="EditButtons" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,24,0,0">
                 <Button Content="取消" Width="88" Margin="0,0,10,0" Style="{StaticResource ModernButton}" IsCancel="True"/>
                 <Button Content="保存" Width="88" Style="{StaticResource PrimaryButton}" IsDefault="True" Click="Save_Click"/>
             </StackPanel>
-        </Grid>
+
+            <!-- 手动添加页的按钮 -->
+            <StackPanel x:Name="ManualButtons" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,24,0,0" Visibility="Collapsed">
+                <Button Content="清空表单" Width="88" Margin="0,0,10,0" Style="{StaticResource ModernButton}" Click="ClearForm_Click"/>
+                <Button Content="关闭" Width="88" Margin="0,0,10,0" Style="{StaticResource ModernButton}" IsCancel="True"/>
+                <Button x:Name="SaveAndAddButton" Content="保存并添加" Width="106" Style="{StaticResource PrimaryButton}" IsDefault="True" Click="SaveAndAdd_Click"/>
+            </StackPanel>
+
+            <!-- 批量导入页的按钮 -->
+            <StackPanel x:Name="ImportButtons" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,24,0,0" Visibility="Collapsed">
+                <Button Content="关闭" Width="88" Style="{StaticResource ModernButton}" IsCancel="True"/>
+            </StackPanel>
+        </StackPanel>
     </Border>
 </Window>

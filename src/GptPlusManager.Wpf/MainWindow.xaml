@@ -5,38 +5,10 @@
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:infra="clr-namespace:GptPlusManager.Wpf.Infrastructure"
         xmlns:vm="clr-namespace:GptPlusManager.Wpf.ViewModels"
-        xmlns:views="clr-namespace:GptPlusManager.Wpf.Views"
         mc:Ignorable="d"
         Title="ChatGPT Account Manager" Width="1320" Height="820" MinWidth="1000" MinHeight="620"
         WindowStartupLocation="CenterScreen">
     <Window.Resources>
-        <!-- 顶部页面切换按钮 -->
-        <Style x:Key="PageTabButton" TargetType="RadioButton">
-            <Setter Property="Foreground" Value="{DynamicResource MutedBrush}"/>
-            <Setter Property="Cursor" Value="Hand"/>
-            <Setter Property="Padding" Value="14,7"/>
-            <Setter Property="FontSize" Value="13"/>
-            <Setter Property="Template">
-                <Setter.Value>
-                    <ControlTemplate TargetType="RadioButton">
-                        <Border x:Name="Bd" CornerRadius="6" Background="Transparent" Padding="{TemplateBinding Padding}">
-                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                        </Border>
-                        <ControlTemplate.Triggers>
-                            <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="Bd" Property="Background" Value="{DynamicResource SurfaceHoverBrush}"/>
-                            </Trigger>
-                            <Trigger Property="IsChecked" Value="True">
-                                <Setter TargetName="Bd" Property="Background" Value="{DynamicResource SurfaceRaisedBrush}"/>
-                                <Setter Property="Foreground" Value="{DynamicResource TextBrush}"/>
-                                <Setter Property="FontWeight" Value="SemiBold"/>
-                            </Trigger>
-                        </ControlTemplate.Triggers>
-                    </ControlTemplate>
-                </Setter.Value>
-            </Setter>
-        </Style>
-
         <Style x:Key="ToolbarButton" TargetType="Button" BasedOn="{StaticResource ModernButton}">
             <Setter Property="Margin" Value="0,0,8,0"/>
             <Setter Property="Padding" Value="11,7"/>
@@ -191,20 +163,10 @@
             <Grid>
                 <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
                 <StackPanel Orientation="Horizontal">
-                    <!-- 页面切换 -->
-                    <RadioButton Content="账号列表" GroupName="Pages" Command="{Binding ShowAccountsPageCommand}"
-                                 Style="{StaticResource PageTabButton}" AutomationProperties.Name="账号列表页">
-                        <RadioButton.IsChecked>
-                            <Binding Path="IsAccountsPage" Mode="OneWay"/>
-                        </RadioButton.IsChecked>
-                    </RadioButton>
-                    <RadioButton Content="添加账号" GroupName="Pages" Command="{Binding ShowAddAccountPageCommand}"
-                                 Style="{StaticResource PageTabButton}" AutomationProperties.Name="添加账号页" Margin="6,0,10,0">
-                        <RadioButton.IsChecked>
-                            <Binding Path="IsAddAccountPage" Mode="OneWay"/>
-                        </RadioButton.IsChecked>
-                    </RadioButton>
-                    <Border Width="1" Background="{DynamicResource BorderBrush}" Margin="0,6,10,6"/>
+                    <Button Command="{Binding AddAccountCommand}" Style="{StaticResource PrimaryButton}" Margin="0,0,8,0"
+                            AutomationProperties.Name="添加账号">
+                        <StackPanel Orientation="Horizontal"><Viewbox Width="18" Height="18" Margin="0,0,7,0"><Path Data="{StaticResource IconAdd}" Fill="{DynamicResource AccentTextBrush}"/></Viewbox><TextBlock Text="添加账号"/></StackPanel>
+                    </Button>
                     <Button Command="{Binding ExportCommand}" Style="{StaticResource ToolbarButton}" AutomationProperties.Name="导出与备份"
                             ToolTip="导出 JSON 备份和文本清单，并可打开导出目录">
                         <StackPanel Orientation="Horizontal"><Viewbox Width="18" Height="18" Margin="0,0,7,0"><Path Data="{StaticResource IconExport}" Fill="{DynamicResource TextBrush}"/></Viewbox><TextBlock Text="导出与备份"/></StackPanel>
@@ -224,14 +186,13 @@
                     </Button>
                 </StackPanel>
                 <StackPanel Grid.Column="2" Orientation="Horizontal">
-                    <Border Width="126" Height="38" Background="{DynamicResource InputBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" CornerRadius="7" Margin="0,0,10,0"
-                            Visibility="{Binding IsAccountsPage, Converter={StaticResource BoolToVisibility}}">
+                    <Border Width="126" Height="38" Background="{DynamicResource InputBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" CornerRadius="7" Margin="0,0,10,0">
                         <Grid>
                             <TextBlock Text="{Binding GlobalTotpCountdown, StringFormat=验证码 {0} 刷新}" HorizontalAlignment="Center" VerticalAlignment="Center" FontWeight="SemiBold"/>
                             <ProgressBar Maximum="30" Value="{Binding GlobalTotpRemaining}" Height="3" VerticalAlignment="Bottom" Margin="4" Style="{StaticResource ModernProgressBar}"/>
                         </Grid>
                     </Border>
-                    <Grid Width="230" Visibility="{Binding IsAccountsPage, Converter={StaticResource BoolToVisibility}}">
+                    <Grid Width="230">
                         <TextBox Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}" Style="{StaticResource ModernTextBox}" Padding="36,8,10,8" ToolTip="搜索邮箱、备注或套餐"/>
                         <Viewbox Width="16" Height="16" HorizontalAlignment="Left" Margin="12,0,0,0" IsHitTestVisible="False"><Path Data="{StaticResource IconSearch}" Fill="{DynamicResource MutedBrush}"/></Viewbox>
                     </Grid>
@@ -239,8 +200,7 @@
             </Grid>
         </Border>
 
-        <!-- 账号列表页 -->
-        <AdornerDecorator Grid.Row="1" Visibility="{Binding IsAccountsPage, Converter={StaticResource BoolToVisibility}}">
+        <AdornerDecorator Grid.Row="1">
             <ScrollViewer x:Name="CardsScroll" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Padding="16"
                           AllowDrop="True" PreviewDragOver="Cards_PreviewDragOver" PreviewDrop="Cards_PreviewDrop"
                           PreviewDragLeave="Cards_PreviewDragLeave">
@@ -254,12 +214,7 @@
             </ScrollViewer>
         </AdornerDecorator>
 
-        <!-- 添加账号页 -->
-        <views:AddAccountView Grid.Row="1" DataContext="{Binding AddAccountPage}"
-                              Visibility="{Binding DataContext.IsAddAccountPage, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource BoolToVisibility}}"/>
-
-        <Border Grid.Row="2" Background="{DynamicResource SurfaceBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="0,1,0,0" Padding="14,0"
-                Visibility="{Binding IsAccountsPage, Converter={StaticResource BoolToVisibility}}">
+        <Border Grid.Row="2" Background="{DynamicResource SurfaceBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="0,1,0,0" Padding="14,0">
             <Grid>
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*"/>

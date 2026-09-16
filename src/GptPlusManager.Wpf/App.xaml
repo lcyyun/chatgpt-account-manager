@@ -98,11 +98,38 @@
             </Style>
 
             <!-- 无边框按钮：卡片内可点击复制的字段、状态栏目录链接、页面内次要操作。
-                 定义在应用级，供 MainWindow 与各 UserControl 页面共用。 -->
+                 定义在应用级，供 MainWindow 与各窗口共用。 -->
             <Style x:Key="FlatFieldButton" TargetType="Button" BasedOn="{StaticResource ModernButton}">
                 <Setter Property="Background" Value="Transparent" /><Setter Property="BorderThickness" Value="0" />
                 <Setter Property="Padding" Value="5,3" /><Setter Property="MinHeight" Value="26" />
                 <Setter Property="HorizontalContentAlignment" Value="Left" />
+            </Style>
+
+            <!-- 页签式切换按钮：添加账号弹窗内的「手动添加 / 批量导入」分页。 -->
+            <Style x:Key="PageTabButton" TargetType="RadioButton">
+                <Setter Property="Foreground" Value="{DynamicResource MutedBrush}" />
+                <Setter Property="Cursor" Value="Hand" />
+                <Setter Property="Padding" Value="14,7" />
+                <Setter Property="FontSize" Value="13" />
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="RadioButton">
+                            <Border x:Name="Bd" CornerRadius="6" Background="Transparent" Padding="{TemplateBinding Padding}">
+                                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+                            </Border>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="IsMouseOver" Value="True">
+                                    <Setter TargetName="Bd" Property="Background" Value="{DynamicResource SurfaceHoverBrush}" />
+                                </Trigger>
+                                <Trigger Property="IsChecked" Value="True">
+                                    <Setter TargetName="Bd" Property="Background" Value="{DynamicResource SurfaceRaisedBrush}" />
+                                    <Setter Property="Foreground" Value="{DynamicResource TextBrush}" />
+                                    <Setter Property="FontWeight" Value="SemiBold" />
+                                </Trigger>
+                            </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
             </Style>
 
             <Style x:Key="ModernTextBox" TargetType="TextBox">

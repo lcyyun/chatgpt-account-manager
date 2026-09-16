@@ -25,11 +25,9 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         AccountsView = CollectionViewSource.GetDefaultView(Accounts);
         AccountsView.Filter = FilterAccount;
         InitializeCommand = new AsyncRelayCommand(InitializeAsync, () => !IsBusy);
-        ShowAccountsPageCommand = new RelayCommand(() => IsAccountsPage = true);
-        ShowAddAccountPageCommand = new RelayCommand(() => IsAccountsPage = false);
+        AddAccountCommand = new RelayCommand(AddAccount, () => !IsBusy);
         ExportCommand = new RelayCommand(() => ExportWindow.ShowDialog(_service, _ui), () => !IsBusy);
         OpenExportsFolderCommand = new RelayCommand(OpenExportsFolder);
-        AddAccountPage = new AddAccountViewModel(_service, _ui, async () => await ReloadFromServiceAsync(CancellationToken.None));
         QueryAllCommand = new AsyncRelayCommand(QueryAllAsync, () => !IsBusy && Accounts.Count > 0);
         RestartCodexCommand = new AsyncRelayCommand(RestartCodexAsync, () => !IsBusy);
         ToggleKeepAliveCommand = new AsyncRelayCommand(ToggleKeepAliveAsync, () => !IsBusy);
@@ -43,12 +41,6 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     public ObservableCollection<AccountViewModel> Accounts { get; } = [];
     public ICollectionView AccountsView { get; }
 
-    /// <summary>"添加账号"页的 ViewModel（手动录入 + 批量导入）。</summary>
-    public AddAccountViewModel AddAccountPage { get; }
-
-    [ObservableProperty] private bool _isAccountsPage = true;
-    public bool IsAddAccountPage => !IsAccountsPage;
-    partial void OnIsAccountsPageChanged(bool value) => OnPropertyChanged(nameof(IsAddAccountPage));
     [ObservableProperty] private string _searchText = string.Empty;
     [ObservableProperty] private bool _isBusy;
     [ObservableProperty] private bool _isSavingOrder;
@@ -69,8 +61,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     /// <summary>导出目录，显示在状态栏并提供一键打开。</summary>
     public string ExportsDirectory => _service.ExportsDirectory;
     public IAsyncRelayCommand InitializeCommand { get; }
-    public IRelayCommand ShowAccountsPageCommand { get; }
-    public IRelayCommand ShowAddAccountPageCommand { get; }
+    public IRelayCommand AddAccountCommand { get; }
     public IRelayCommand ExportCommand { get; }
     public IRelayCommand OpenExportsFolderCommand { get; }
     public IAsyncRelayCommand QueryAllCommand { get; }
@@ -174,6 +165,18 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         OnClockTick(this, EventArgs.Empty);
         NotifyCounts();
         QueryAllCommand.NotifyCanExecuteChanged();
+    }
+
+    private void AddAccount()
+    {
+        // 弹窗内分「手动添加 / 批量导入」两页；任一页提交后都重新载入列表。
+        if (AccountEditorWindow.ShowAddDialog(_service, _ui)) _ = ReloadAfterDialogAsync();
+    }
+
+    private async Task ReloadAfterDialogAsync()
+    {
+        try { await ReloadFromServiceAsync(CancellationToken.None); }
+        catch (Exception ex) { ShowToast(ex.Message, true); }
     }
 
     private async Task EditAccountAsync(AccountViewModel account)
