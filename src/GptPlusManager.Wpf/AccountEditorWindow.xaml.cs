@@ -3,13 +3,12 @@ using GptPlusManager.Wpf.Services;
 
 namespace GptPlusManager.Wpf;
 
+/// <summary>编辑单个已有账号。批量导入由「添加账号」页负责。</summary>
 public partial class AccountEditorWindow : Window
 {
-    private AccountEditorWindow(AccountEditRequest? existing)
+    private AccountEditorWindow(AccountEditRequest existing)
     {
         InitializeComponent();
-        Title = existing is null ? "添加账号" : "编辑账号";
-        if (existing is null) return;
         EmailBox.Text = existing.Email;
         PasswordBox.Text = existing.Password;
         SecretBox.Text = existing.TwoFactorSecret;
@@ -19,7 +18,8 @@ public partial class AccountEditorWindow : Window
 
     public AccountEditRequest? Result { get; private set; }
 
-    public static AccountEditRequest? ShowDialog(AccountEditRequest? existing)
+    /// <summary>返回 null 表示用户取消。</summary>
+    public static AccountEditRequest? ShowDialog(AccountEditRequest existing)
     {
         var dialog = new AccountEditorWindow(existing) { Owner = Application.Current?.MainWindow };
         return dialog.ShowDialog() == true ? dialog.Result : null;

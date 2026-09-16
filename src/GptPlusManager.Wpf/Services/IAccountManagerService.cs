@@ -32,11 +32,11 @@ public interface IAccountManagerService : IDisposable
     /// <summary>写出纯文本清单，返回完整文件路径。</summary>
     Task<string> ExportTextAsync(CancellationToken cancellationToken = default);
 
-    /// <summary>把导出的 JSON 或文本文件合并进现有账号，导入前会自动备份当前数据。</summary>
-    Task<ImportUiResult> ImportAsync(string filePath, CancellationToken cancellationToken = default);
-
     /// <summary>按文件名倒序列出导出目录中的可导入文件，最新的在最前。</summary>
     IReadOnlyList<string> ListExportFiles();
+
+    /// <summary>把粘贴或读取到的内容合并进现有账号，导入前会自动备份当前数据。</summary>
+    Task<ImportUiResult> ImportTextAsync(string content, string sourceLabel, CancellationToken cancellationToken = default);
 
     Task<bool> GetKeepAliveAsync(CancellationToken cancellationToken = default);
     Task SetKeepAliveAsync(bool enabled, CancellationToken cancellationToken = default);

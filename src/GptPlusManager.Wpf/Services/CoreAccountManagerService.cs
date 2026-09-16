@@ -237,31 +237,30 @@ public sealed class CoreAccountManagerService : IAccountManagerService
             .ToArray();
     }
 
-    public async Task<ImportUiResult> ImportAsync(string filePath, CancellationToken cancellationToken = default)
+    public async Task<ImportUiResult> ImportTextAsync(string content, string sourceLabel, CancellationToken cancellationToken = default)
     {
-        if (string.IsNullOrWhiteSpace(filePath) || !File.Exists(filePath))
-            throw new FileNotFoundException("导入文件不存在。", filePath);
+        if (string.IsNullOrWhiteSpace(content))
+            throw new InvalidOperationException("导入内容为空。");
 
         await _gate.WaitAsync(cancellationToken);
         string? backupPath = null;
         try
         {
-            var content = await File.ReadAllTextAsync(filePath, cancellationToken);
             var incoming = AccountImportExport.Parse(content, out var parseSkipped);
+            if (incoming.Count == 0)
+                throw new InvalidOperationException("没有解析到任何账号，请检查内容格式（应为 JSON 备份，或每行「邮箱 | 密码 | 密钥」）。");
 
             // 导入前先备份，便于回滚一次误操作。
             backupPath = await BackupJsonAsync(cancellationToken);
 
-            var summary = AccountImportExport.Merge(_records, incoming);
-            summary = summary with { Skipped = summary.Skipped + parseSkipped };
-
+            var summary = AccountImportExport.Merge(_records, incoming) with { Skipped = parseSkipped };
             if (summary.Added > 0 || summary.Updated > 0)
             {
                 await _accounts.SaveAsync(_records, cancellationToken);
                 RebuildIndex();
             }
 
-            return new ImportUiResult(filePath, summary, backupPath);
+            return new ImportUiResult(sourceLabel, summary, backupPath);
         }
         finally { _gate.Release(); }
     }

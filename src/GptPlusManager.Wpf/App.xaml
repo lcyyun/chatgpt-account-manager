@@ -97,6 +97,14 @@
                 <Setter Property="Height" Value="36" /><Setter Property="Padding" Value="6" />
             </Style>
 
+            <!-- 无边框按钮：卡片内可点击复制的字段、状态栏目录链接、页面内次要操作。
+                 定义在应用级，供 MainWindow 与各 UserControl 页面共用。 -->
+            <Style x:Key="FlatFieldButton" TargetType="Button" BasedOn="{StaticResource ModernButton}">
+                <Setter Property="Background" Value="Transparent" /><Setter Property="BorderThickness" Value="0" />
+                <Setter Property="Padding" Value="5,3" /><Setter Property="MinHeight" Value="26" />
+                <Setter Property="HorizontalContentAlignment" Value="Left" />
+            </Style>
+
             <Style x:Key="ModernTextBox" TargetType="TextBox">
                 <Setter Property="Foreground" Value="{DynamicResource TextBrush}" />
                 <Setter Property="CaretBrush" Value="{DynamicResource CyanBrush}" />

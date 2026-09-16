@@ -11,16 +11,22 @@ public sealed partial class AccountViewModel : ObservableObject
     private readonly IUiService _ui;
     private readonly Func<AccountViewModel, Task> _editRequested;
     private readonly Func<AccountViewModel, Task> _deleteRequested;
-    private readonly Action<AccountViewModel> _changed;
+
+    /// <summary>账号状态变化（如 Codex 标记）。只刷新显示，绝不改变列表顺序。</summary>
+    private readonly Action<AccountViewModel> _stateChanged;
+
+    /// <summary>账号有效性变化。需要把卡片移入对应的有效 / 无效分组。</summary>
+    private readonly Action<AccountViewModel> _validityChanged;
+
     private readonly Action<string, bool> _toast;
     private IAccountAuthorizationSession? _authorizationSession;
 
     public AccountViewModel(AccountSnapshot s, IAccountManagerService service, IUiService ui,
         Func<AccountViewModel, Task> editRequested, Func<AccountViewModel, Task> deleteRequested,
-        Action<AccountViewModel> changed, Action<string, bool> toast)
+        Action<AccountViewModel> stateChanged, Action<AccountViewModel> validityChanged, Action<string, bool> toast)
     {
         _service = service; _ui = ui; _editRequested = editRequested; _deleteRequested = deleteRequested;
-        _changed = changed; _toast = toast; Id = s.Id;
+        _stateChanged = stateChanged; _validityChanged = validityChanged; _toast = toast; Id = s.Id;
         AuthorizeCommand = new AsyncRelayCommand(StartAuthorizationAsync, () => !IsBusy && !IsAuthorizing);
         ReopenAuthorizationCommand = new RelayCommand(ReopenAuthorization, () => IsAuthorizing);
         CopyAuthorizationUrlCommand = new RelayCommand(CopyAuthorizationUrl, () => IsAuthorizing);
@@ -144,7 +150,7 @@ public sealed partial class AccountViewModel : ObservableObject
             IsAuthorized = result.IsAuthorized;
             IsInvalid = result.IsInvalid;
             IsCurrentCodex = result.IsCurrentCodex;
-            _changed(this);
+            _validityChanged(this);
             _toast($"{Email}: {result.StatusText}", false);
         }
         catch (OperationCanceledException)
@@ -186,9 +192,9 @@ public sealed partial class AccountViewModel : ObservableObject
     private async Task QueryUsageAsync() => await RunAsync(QueryUsageCoreAsync);
     private async Task QueryUsageCoreAsync() { Apply(await _service.QueryUsageAsync(Id)); Tick(DateTimeOffset.Now); _toast($"已更新 {Email} 的用量", false); }
     private async Task DeleteAsync() => await RunAsync(() => _deleteRequested(this));
-    private async Task SwitchCodexAsync() => await RunAsync(async () => { await _service.SwitchCodexAsync(Id); IsCurrentCodex = true; _changed(this); _toast($"Codex 已切换到 {Email}", false); });
+    private async Task SwitchCodexAsync() => await RunAsync(async () => { await _service.SwitchCodexAsync(Id); IsCurrentCodex = true; _stateChanged(this); _toast($"Codex 已切换到 {Email}", false); });
     private async Task ConsumeResetAsync() => await RunAsync(async () => { if (!_ui.Confirm("兑换重置卡", $"对 {Email} 使用一张重置卡？两个用量窗口会被重置。")) return; var r = await _service.ConsumeResetCreditAsync(Id); ResetCreditsAvailable = r.AvailableCredits; await QueryUsageCoreAsync(); _toast(r.Message, false); });
-    private async Task ToggleInvalidAsync() => await RunAsync(async () => { Apply(await _service.SetInvalidAsync(Id, !IsInvalid)); _changed(this); _toast(IsInvalid ? "账号已标记无效" : "账号已恢复有效", false); });
+    private async Task ToggleInvalidAsync() => await RunAsync(async () => { Apply(await _service.SetInvalidAsync(Id, !IsInvalid)); _validityChanged(this); _toast(IsInvalid ? "账号已标记无效" : "账号已恢复有效", false); });
     private void Copy(string value, string label) { if (string.IsNullOrEmpty(value)) return; _ui.CopyText(value); _toast($"已复制{label}", false); }
     private async Task CopyCodeAsync() { _ui.CopyText(TotpCode); IsCodeCopied = true; _toast("验证码已复制", false); await Task.Delay(650); IsCodeCopied = false; }
 
