@@ -1,0 +1,9 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/GptPlusManager.Core/GptPlusManager.Core.csproj" />
+    <Project Path="src/GptPlusManager.Wpf/GptPlusManager.Wpf.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/GptPlusManager.Core.Tests/GptPlusManager.Core.Tests.csproj" />
+  </Folder>
+</Solution>

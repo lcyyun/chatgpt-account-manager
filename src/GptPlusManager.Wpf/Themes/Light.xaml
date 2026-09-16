@@ -1,0 +1,47 @@
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <!-- Light palette. Same keys as Dark.xaml so a dictionary swap re-themes every consumer. -->
+    <Color x:Key="CanvasColor">#F4F6F9</Color>
+    <Color x:Key="SurfaceColor">#FFFFFF</Color>
+    <Color x:Key="SurfaceRaisedColor">#F8FAFC</Color>
+    <Color x:Key="SurfaceHoverColor">#E9EEF5</Color>
+    <Color x:Key="InputColor">#FFFFFF</Color>
+    <Color x:Key="BorderColor">#CBD3DF</Color>
+    <Color x:Key="BorderHoverColor">#7C8BA1</Color>
+    <Color x:Key="TextColor">#172033</Color>
+    <Color x:Key="MutedColor">#647087</Color>
+    <Color x:Key="AccentColor">#6254D9</Color>
+    <Color x:Key="AccentTextColor">#FFFFFF</Color>
+    <Color x:Key="CyanColor">#087F91</Color>
+    <Color x:Key="GreenColor">#138A58</Color>
+    <Color x:Key="AmberColor">#A65D00</Color>
+    <Color x:Key="DangerColor">#C83F52</Color>
+    <Color x:Key="ProgressTrackColor">#DDE3EC</Color>
+    <Color x:Key="ToggleTrackColor">#AAB4C2</Color>
+    <Color x:Key="ToastColor">#F7FFFFFF</Color>
+    <Color x:Key="CalendarOutsideColor">#98A2B3</Color>
+    <Color x:Key="InvalidWashColor">#16C83F52</Color>
+    <Color x:Key="ScrimColor">#33000000</Color>
+
+    <SolidColorBrush x:Key="CanvasBrush" Color="{StaticResource CanvasColor}" />
+    <SolidColorBrush x:Key="SurfaceBrush" Color="{StaticResource SurfaceColor}" />
+    <SolidColorBrush x:Key="SurfaceRaisedBrush" Color="{StaticResource SurfaceRaisedColor}" />
+    <SolidColorBrush x:Key="SurfaceHoverBrush" Color="{StaticResource SurfaceHoverColor}" />
+    <SolidColorBrush x:Key="InputBrush" Color="{StaticResource InputColor}" />
+    <SolidColorBrush x:Key="BorderBrush" Color="{StaticResource BorderColor}" />
+    <SolidColorBrush x:Key="BorderHoverBrush" Color="{StaticResource BorderHoverColor}" />
+    <SolidColorBrush x:Key="TextBrush" Color="{StaticResource TextColor}" />
+    <SolidColorBrush x:Key="MutedBrush" Color="{StaticResource MutedColor}" />
+    <SolidColorBrush x:Key="AccentBrush" Color="{StaticResource AccentColor}" />
+    <SolidColorBrush x:Key="AccentTextBrush" Color="{StaticResource AccentTextColor}" />
+    <SolidColorBrush x:Key="CyanBrush" Color="{StaticResource CyanColor}" />
+    <SolidColorBrush x:Key="GreenBrush" Color="{StaticResource GreenColor}" />
+    <SolidColorBrush x:Key="AmberBrush" Color="{StaticResource AmberColor}" />
+    <SolidColorBrush x:Key="DangerBrush" Color="{StaticResource DangerColor}" />
+    <SolidColorBrush x:Key="ProgressTrackBrush" Color="{StaticResource ProgressTrackColor}" />
+    <SolidColorBrush x:Key="ToggleTrackBrush" Color="{StaticResource ToggleTrackColor}" />
+    <SolidColorBrush x:Key="ToastBrush" Color="{StaticResource ToastColor}" />
+    <SolidColorBrush x:Key="CalendarOutsideBrush" Color="{StaticResource CalendarOutsideColor}" />
+    <SolidColorBrush x:Key="InvalidWashBrush" Color="{StaticResource InvalidWashColor}" />
+    <SolidColorBrush x:Key="ScrimBrush" Color="{StaticResource ScrimColor}" />
+</ResourceDictionary>

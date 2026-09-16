@@ -1,0 +1,40 @@
+# ── 敏感数据：绝对不能提交 ────────────────────────────────
+# 账号凭据、2FA 密钥、OAuth/DPAPI 令牌、Codex 授权、偏好与导出
+accounts.json
+accounts*.json
+settings.json
+wpf-preferences.json
+*.token
+tokens/
+profiles/
+exports/
+.codex/
+auth.json
+auth.json.*.bak
+migration-backup-*/
+*.bak-*
+*.appbak
+
+# ── 发布产物与旧版二进制 ──────────────────────────────────
+publish-wpf/
+publish/
+[Ss]elftest_result.txt
+
+# ── .NET 构建产物 ─────────────────────────────────────────
+bin/
+obj/
+*.user
+*.suo
+*.userprefs
+.vs/
+*.binlog
+
+# ── 编辑器与系统 ──────────────────────────────────────────
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini
+*.swp
+
+# ── 运行期日志 ────────────────────────────────────────────
+*.log
