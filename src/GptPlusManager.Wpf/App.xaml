@@ -1,4 +1,4 @@
-<Application x:Class="GptPlusManager.Wpf.App"
+﻿<Application x:Class="GptPlusManager.Wpf.App"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:infra="clr-namespace:GptPlusManager.Wpf.Infrastructure"
@@ -33,6 +33,8 @@
             <StreamGeometry x:Key="IconSun">M11,1 L13,1 13,4 11,4 Z M11,20 L13,20 13,23 11,23 Z M1,11 L4,11 4,13 1,13 Z M20,11 L23,11 23,13 20,13 Z M4.2,5.6 L5.6,4.2 7.7,6.3 6.3,7.7 Z M16.3,17.7 L17.7,16.3 19.8,18.4 18.4,19.8 Z M16.3,6.3 L18.4,4.2 19.8,5.6 17.7,7.7 Z M4.2,18.4 L6.3,16.3 7.7,17.7 5.6,19.8 Z M12,6 C15.3,6 18,8.7 18,12 C18,15.3 15.3,18 12,18 C8.7,18 6,15.3 6,12 C6,8.7 8.7,6 12,6 Z M12,8 C9.8,8 8,9.8 8,12 C8,14.2 9.8,16 12,16 C14.2,16 16,14.2 16,12 C16,9.8 14.2,8 12,8 Z</StreamGeometry>
             <StreamGeometry x:Key="IconMoon">M19.2,15.5 C16,16.7 12.5,15.9 10.2,13.6 C7.9,11.3 7.1,7.8 8.3,4.6 C5.1,6 3,9.1 3,12.6 C3,17.2 6.8,21 11.4,21 C14.9,21 18,18.9 19.4,15.7 Z</StreamGeometry>
             <StreamGeometry x:Key="IconCalendar">M5,2 L7,2 7,5 17,5 17,2 19,2 19,5 21,5 21,22 3,22 3,5 5,5 Z M5,9 L5,20 19,20 19,9 Z M7,11 L10,11 10,14 7,14 Z M11,11 L14,11 14,14 11,14 Z M15,11 L18,11 18,14 15,14 Z M7,15 L10,15 10,18 7,18 Z M11,15 L14,15 14,18 11,18 Z</StreamGeometry>
+            <StreamGeometry x:Key="IconImport">M11,2 L13,2 13,13 17,9 18.5,10.5 12,17 5.5,10.5 7,9 11,13 Z M3,18 L5,18 5,20 19,20 19,18 21,18 21,22 3,22 Z</StreamGeometry>
+            <StreamGeometry x:Key="IconFolder">M3,4 L10,4 12,6 21,6 21,20 3,20 Z M5,8 L5,18 19,18 19,8 Z</StreamGeometry>
 
             <Style TargetType="Window">
                 <Setter Property="Background" Value="{DynamicResource CanvasBrush}" />

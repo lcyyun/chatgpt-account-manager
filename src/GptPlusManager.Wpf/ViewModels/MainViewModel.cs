@@ -1,5 +1,6 @@
 using System.Collections.ObjectModel;
 using System.ComponentModel;
+using System.IO;
 using System.Windows.Data;
 using System.Windows.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
@@ -25,8 +26,10 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         AccountsView.Filter = FilterAccount;
         InitializeCommand = new AsyncRelayCommand(InitializeAsync, () => !IsBusy);
         AddAccountCommand = new AsyncRelayCommand(AddAccountAsync, () => !IsBusy);
-        BackupJsonCommand = new AsyncRelayCommand(() => RunGlobalAsync(_service.BackupJsonAsync, "JSON 备份已保存到 exports"), () => !IsBusy);
-        ExportTextCommand = new AsyncRelayCommand(() => RunGlobalAsync(_service.ExportTextAsync, "文本已导出到 exports"), () => !IsBusy);
+        BackupJsonCommand = new AsyncRelayCommand(BackupJsonAsync, () => !IsBusy);
+        ExportTextCommand = new AsyncRelayCommand(ExportTextAsync, () => !IsBusy);
+        ImportCommand = new AsyncRelayCommand(ImportAsync, () => !IsBusy);
+        OpenExportsFolderCommand = new RelayCommand(OpenExportsFolder);
         QueryAllCommand = new AsyncRelayCommand(QueryAllAsync, () => !IsBusy && Accounts.Count > 0);
         RestartCodexCommand = new AsyncRelayCommand(RestartCodexAsync, () => !IsBusy);
         ToggleKeepAliveCommand = new AsyncRelayCommand(ToggleKeepAliveAsync, () => !IsBusy);
@@ -55,10 +58,15 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     public int VisibleAccountCount => AccountsView.Cast<object>().Count();
     public int InvalidAccountCount => Accounts.Count(x => x.IsInvalid);
     public string KeepAliveText => IsKeepAliveEnabled ? "保活：开" : "保活：关";
+
+    /// <summary>导出目录，显示在状态栏并提供一键打开。</summary>
+    public string ExportsDirectory => _service.ExportsDirectory;
     public IAsyncRelayCommand InitializeCommand { get; }
     public IAsyncRelayCommand AddAccountCommand { get; }
     public IAsyncRelayCommand BackupJsonCommand { get; }
     public IAsyncRelayCommand ExportTextCommand { get; }
+    public IAsyncRelayCommand ImportCommand { get; }
+    public IRelayCommand OpenExportsFolderCommand { get; }
     public IAsyncRelayCommand QueryAllCommand { get; }
     public IAsyncRelayCommand RestartCodexCommand { get; }
     public IAsyncRelayCommand ToggleKeepAliveCommand { get; }
@@ -159,6 +167,66 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
             Accounts.Add(CreateAccount(await _service.AddAccountAsync(request, ct)));
             NotifyCounts(); ShowToast("账号已添加", false);
         }, null);
+    }
+
+    private async Task BackupJsonAsync()
+    {
+        await RunGlobalAsync(async ct =>
+        {
+            var path = await _service.BackupJsonAsync(ct);
+            StatusText = "最近导出：" + path;
+            ShowToast("JSON 备份已保存到 " + Path.GetFileName(path), false);
+            _ui.RevealInExplorer(path);
+        }, null);
+    }
+
+    private async Task ExportTextAsync()
+    {
+        await RunGlobalAsync(async ct =>
+        {
+            var path = await _service.ExportTextAsync(ct);
+            StatusText = "最近导出：" + path;
+            ShowToast("文本清单已保存到 " + Path.GetFileName(path), false);
+            _ui.RevealInExplorer(path);
+        }, null);
+    }
+
+    private async Task ImportAsync()
+    {
+        // 对话框默认定位到导出目录并预选最新文件，点一下即可导入。
+        var file = _ui.PickImportFile(_service.ExportsDirectory, _service.ListExportFiles());
+        if (file is null) return;
+
+        if (!_ui.Confirm("导入账号",
+            $"将从以下文件导入账号：\n\n{file}\n\n"
+            + "已存在的邮箱会更新密码 / 2FA / 购买时间 / 备注（仅覆盖文件中有值的字段），"
+            + "新邮箱会追加为账号。导入前会自动备份当前数据。\n\n继续？"))
+        {
+            return;
+        }
+
+        await RunGlobalAsync(async ct =>
+        {
+            var result = await _service.ImportAsync(file, ct);
+            await ReloadFromServiceAsync(ct);
+            var summary = result.Summary;
+            var message = $"导入完成：新增 {summary.Added} 个，更新 {summary.Updated} 个"
+                + (summary.Skipped > 0 ? $"，跳过 {summary.Skipped} 行" : string.Empty);
+            StatusText = message + " · 备份：" + (result.BackupPath is null ? "无" : Path.GetFileName(result.BackupPath));
+            _ui.Info("导入完成", message + (result.BackupPath is null ? string.Empty : $"\n\n导入前备份：\n{result.BackupPath}"));
+        }, null);
+    }
+
+    private void OpenExportsFolder() => _ui.RevealInExplorer(_service.ExportsDirectory);
+
+    private async Task ReloadFromServiceAsync(CancellationToken cancellationToken)
+    {
+        Accounts.Clear();
+        foreach (var snapshot in await _service.LoadAccountsAsync(cancellationToken)) Accounts.Add(CreateAccount(snapshot));
+        NormalizeValidityGroups();
+        OnClockTick(this, EventArgs.Empty);
+        NotifyCounts();
+        QueryAllCommand.NotifyCanExecuteChanged();
     }
 
     private async Task EditAccountAsync(AccountViewModel account)

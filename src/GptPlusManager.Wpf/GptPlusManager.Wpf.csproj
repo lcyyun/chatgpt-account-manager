@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <ItemGroup>
     <ProjectReference Include="..\GptPlusManager.Core\GptPlusManager.Core.csproj" />
@@ -15,12 +15,12 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <UseWPF>true</UseWPF>
 
-    <Version>0.1.0</Version>
+    <Version>0.2.0</Version>
     <AssemblyName>ChatGptAccountManager</AssemblyName>
     <RootNamespace>GptPlusManager.Wpf</RootNamespace>
     <Product>ChatGPT Account Manager</Product>
     <AssemblyTitle>ChatGPT Account Manager</AssemblyTitle>
-    <Description>本地优先的 ChatGPT / Codex 多账号管理工具</Description>
+    <Description>Local-first ChatGPT / Codex multi-account manager</Description>
     <Company>chatgpt-account-manager</Company>
     <Copyright>MIT License</Copyright>
     <NeutralLanguage>zh-CN</NeutralLanguage>

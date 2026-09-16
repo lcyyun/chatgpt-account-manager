@@ -1,3 +1,5 @@
+using GptPlusManager.Core.Services;
+
 namespace GptPlusManager.Wpf.Services;
 
 public interface IAccountAuthorizationSession : IDisposable
@@ -20,8 +22,22 @@ public interface IAccountManagerService : IDisposable
     Task<ResetCreditUiResult> ConsumeResetCreditAsync(Guid accountId, CancellationToken cancellationToken = default);
     Task SwitchCodexAsync(Guid accountId, CancellationToken cancellationToken = default);
     Task<AccountSnapshot> SetInvalidAsync(Guid accountId, bool isInvalid, CancellationToken cancellationToken = default);
-    Task BackupJsonAsync(CancellationToken cancellationToken = default);
-    Task ExportTextAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>导出文件名所在的目录，界面上直接展示给用户。</summary>
+    string ExportsDirectory { get; }
+
+    /// <summary>写出 JSON 备份，返回完整文件路径。</summary>
+    Task<string> BackupJsonAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>写出纯文本清单，返回完整文件路径。</summary>
+    Task<string> ExportTextAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>把导出的 JSON 或文本文件合并进现有账号，导入前会自动备份当前数据。</summary>
+    Task<ImportUiResult> ImportAsync(string filePath, CancellationToken cancellationToken = default);
+
+    /// <summary>按文件名倒序列出导出目录中的可导入文件，最新的在最前。</summary>
+    IReadOnlyList<string> ListExportFiles();
+
     Task<bool> GetKeepAliveAsync(CancellationToken cancellationToken = default);
     Task SetKeepAliveAsync(bool enabled, CancellationToken cancellationToken = default);
     Task RestartCodexAsync(CancellationToken cancellationToken = default);
@@ -75,3 +91,6 @@ public sealed record UsageSnapshot(
     bool IsInvalid);
 
 public sealed record ResetCreditUiResult(string Code, int WindowsReset, int AvailableCredits, string Message);
+
+/// <summary>导入结果，含新增 / 更新 / 跳过数量与导入前的备份路径。</summary>
+public sealed record ImportUiResult(string FilePath, ImportSummary Summary, string? BackupPath);

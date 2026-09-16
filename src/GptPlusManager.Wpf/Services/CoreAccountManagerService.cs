@@ -201,22 +201,75 @@ public sealed class CoreAccountManagerService : IAccountManagerService
         return ToSnapshot(record, await _codex.GetCurrentEmailAsync(cancellationToken));
     }
 
-    public async Task BackupJsonAsync(CancellationToken cancellationToken = default)
+    public string ExportsDirectory => _paths.ExportsDirectory;
+
+    public async Task<string> BackupJsonAsync(CancellationToken cancellationToken = default)
     {
-        var dir = Path.Combine(_paths.DataRoot, "exports");
-        Directory.CreateDirectory(dir);
-        var path = Path.Combine(dir, $"accounts-{DateTime.Now:yyyyMMdd-HHmmss}.json");
-        await using var source = File.OpenRead(_paths.AccountsFile);
-        await using var target = File.Create(path);
-        await source.CopyToAsync(target, cancellationToken);
+        Directory.CreateDirectory(_paths.ExportsDirectory);
+        var path = Path.Combine(_paths.ExportsDirectory, $"accounts-{DateTime.Now:yyyyMMdd-HHmmss}.json");
+        // 序列化当前内存快照，而不是复制磁盘文件，保证导出内容与界面一致。
+        var json = System.Text.Json.JsonSerializer.Serialize(_records, ExportJsonOptions);
+        await File.WriteAllTextAsync(path, json, new UTF8Encoding(false), cancellationToken);
+        return path;
     }
 
-    public async Task ExportTextAsync(CancellationToken cancellationToken = default)
+    private static readonly System.Text.Json.JsonSerializerOptions ExportJsonOptions = new()
     {
-        var dir = Path.Combine(_paths.DataRoot, "exports");
-        Directory.CreateDirectory(dir);
-        var path = Path.Combine(dir, $"accounts-{DateTime.Now:yyyyMMdd-HHmmss}.txt");
+        WriteIndented = true,
+        TypeInfoResolver = new System.Text.Json.Serialization.Metadata.DefaultJsonTypeInfoResolver()
+    };
+
+    public async Task<string> ExportTextAsync(CancellationToken cancellationToken = default)
+    {
+        Directory.CreateDirectory(_paths.ExportsDirectory);
+        var path = Path.Combine(_paths.ExportsDirectory, $"accounts-{DateTime.Now:yyyyMMdd-HHmmss}.txt");
         await File.WriteAllLinesAsync(path, _records.Select(x => x.DisplayLine), new UTF8Encoding(false), cancellationToken);
+        return path;
+    }
+
+    public IReadOnlyList<string> ListExportFiles()
+    {
+        if (!Directory.Exists(_paths.ExportsDirectory)) return [];
+        return Directory.EnumerateFiles(_paths.ExportsDirectory, "accounts-*.*")
+            .Where(x => x.EndsWith(".json", StringComparison.OrdinalIgnoreCase)
+                     || x.EndsWith(".txt", StringComparison.OrdinalIgnoreCase))
+            .OrderByDescending(File.GetLastWriteTimeUtc)
+            .ToArray();
+    }
+
+    public async Task<ImportUiResult> ImportAsync(string filePath, CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(filePath) || !File.Exists(filePath))
+            throw new FileNotFoundException("导入文件不存在。", filePath);
+
+        await _gate.WaitAsync(cancellationToken);
+        string? backupPath = null;
+        try
+        {
+            var content = await File.ReadAllTextAsync(filePath, cancellationToken);
+            var incoming = AccountImportExport.Parse(content, out var parseSkipped);
+
+            // 导入前先备份，便于回滚一次误操作。
+            backupPath = await BackupJsonAsync(cancellationToken);
+
+            var summary = AccountImportExport.Merge(_records, incoming);
+            summary = summary with { Skipped = summary.Skipped + parseSkipped };
+
+            if (summary.Added > 0 || summary.Updated > 0)
+            {
+                await _accounts.SaveAsync(_records, cancellationToken);
+                RebuildIndex();
+            }
+
+            return new ImportUiResult(filePath, summary, backupPath);
+        }
+        finally { _gate.Release(); }
+    }
+
+    private void RebuildIndex()
+    {
+        _byId.Clear();
+        foreach (var record in _records) _byId[StableId(record)] = record;
     }
 
     public async Task<bool> GetKeepAliveAsync(CancellationToken cancellationToken = default) =>
