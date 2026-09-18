@@ -343,7 +343,11 @@ public sealed class UsageClient
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", tokens.AccessToken);
         request.Headers.UserAgent.ParseAdd(OpenAiEndpoints.UserAgent);
         request.Headers.TryAddWithoutValidation("originator", "codex_cli_rs");
-        var accountId = JwtUtility.GetStringClaim(tokens.IdToken, "chatgpt_account_id");
+        // 账号 ID 嵌套在 id_token 的 https://api.openai.com/auth 命名空间里；
+        // 优先用令牌自带的，回退到 claim 解析。
+        var accountId = !string.IsNullOrWhiteSpace(tokens.AccountId)
+            ? tokens.AccountId
+            : JwtUtility.GetChatGptAccountId(tokens.IdToken);
         if (!string.IsNullOrWhiteSpace(accountId))
         {
             request.Headers.TryAddWithoutValidation("chatgpt-account-id", accountId);

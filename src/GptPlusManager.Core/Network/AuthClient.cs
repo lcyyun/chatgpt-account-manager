@@ -461,6 +461,11 @@ public sealed class AuthClient : IDisposable
                     IdToken = ReadString(root, "id_token", oldTokens?.IdToken)
                 };
                 tokens.Email = JwtUtility.GetStringClaim(tokens.IdToken, "email") ?? oldTokens?.Email ?? string.Empty;
+                // 账号 ID 必须随令牌一起带上：Codex 读 auth.json 的 tokens.account_id，
+                // 缺失会让它无法解析账号。
+                tokens.AccountId = JwtUtility.GetChatGptAccountId(tokens.IdToken)
+                    ?? oldTokens?.AccountId
+                    ?? string.Empty;
                 if (string.IsNullOrWhiteSpace(tokens.AccessToken))
                 {
                     return OperationResult<TokenSet>.Failure(

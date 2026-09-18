@@ -73,7 +73,13 @@ public sealed class CodexAuthStore : IDisposable
             tokenNode["id_token"] = tokens.IdToken;
             tokenNode["access_token"] = tokens.AccessToken;
             tokenNode["refresh_token"] = tokens.RefreshToken;
-            tokenNode["account_id"] = JwtUtility.GetStringClaim(tokens.IdToken, "chatgpt_account_id");
+            // 必须写真实账号 ID：Codex 的 get_account_id() 直接读这个字段，
+            // 写成 null 会让它无法解析账号（"waiting for a ChatGPT account id"）。
+            var accountId = JwtUtility.GetChatGptAccountId(tokens.IdToken)
+                ?? (tokenNode["account_id"]?.GetValue<string>() is { Length: > 0 } preserved
+                    ? preserved
+                    : null);
+            tokenNode["account_id"] = accountId;
             root["tokens"] = tokenNode;
             root["last_refresh"] = DateTimeOffset.UtcNow.ToString("O");
 
@@ -142,6 +148,7 @@ public sealed class CodexAuthStore : IDisposable
             IdToken = tokenNode["id_token"]?.GetValue<string>() ?? string.Empty
         };
         tokens.Email = JwtUtility.GetStringClaim(tokens.IdToken, "email") ?? string.Empty;
+        tokens.AccountId = tokenNode["account_id"]?.GetValue<string>() ?? string.Empty;
         return string.IsNullOrEmpty(tokens.AccessToken) ? null : tokens;
     }
 

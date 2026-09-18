@@ -43,6 +43,38 @@ public static class JwtUtility
         return value.ValueKind == JsonValueKind.String ? value.GetString() : value.ToString();
     }
 
+    /// <summary>
+    /// 读取嵌套命名空间下的 claim，例如
+    /// <c>https://api.openai.com/auth</c> → <c>chatgpt_account_id</c>。
+    /// </summary>
+    public static string? GetNestedStringClaim(string? jwt, string parentClaim, string childClaim)
+    {
+        var claims = GetClaims(jwt);
+        if (!claims.TryGetValue(parentClaim, out var parent) || parent.ValueKind != JsonValueKind.Object)
+        {
+            return null;
+        }
+
+        if (!parent.TryGetProperty(childClaim, out var value))
+        {
+            return null;
+        }
+
+        var text = value.ValueKind == JsonValueKind.String ? value.GetString() : value.ToString();
+        return string.IsNullOrWhiteSpace(text) ? null : text;
+    }
+
+    /// <summary>
+    /// ChatGPT 账号 ID。它不在 id_token 顶层，而是位于
+    /// <c>https://api.openai.com/auth</c> 命名空间内。
+    ///
+    /// 这一点很关键：Codex 的 <c>get_account_id()</c> 直接读取 auth.json 的
+    /// <c>tokens.account_id</c> 字段，写错或写成 null 会导致其无法解析账号
+    /// （表现为 "waiting for a ChatGPT account id"，账号信息取不到）。
+    /// </summary>
+    public static string? GetChatGptAccountId(string? jwt) =>
+        GetNestedStringClaim(jwt, "https://api.openai.com/auth", "chatgpt_account_id");
+
     public static DateTimeOffset? GetExpiration(string? jwt)
     {
         var claims = GetClaims(jwt);
