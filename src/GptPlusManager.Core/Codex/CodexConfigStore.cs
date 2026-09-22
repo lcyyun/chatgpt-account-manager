@@ -114,24 +114,44 @@ public sealed class CodexConfigStore : IDisposable
 
     private readonly SemaphoreSlim _gate = new(1, 1);
 
-    public CodexConfigStore(string? userProfile = null)
+    /// <param name="userProfile">
+    /// 用户目录；留空取当前用户。测试与脚手架必须显式传入，否则会改到真实配置。
+    /// </param>
+    /// <param name="appExecutablePath">
+    /// 本应用自己的可执行文件路径——命令式配方会把它写进 config.toml 的
+    /// <c>auth.command</c>，供 Codex 回调取 token。
+    ///
+    /// <para><b>必须由调用方显式提供。</b>不能默认用 <see cref="Environment.ProcessPath"/>：
+    /// 那个值取决于<b>谁加载了这个库</b>，于是任何测试或辅助程序一旦调用，就会把自己的
+    /// exe 路径写进用户的真实配置，把原本正确的路径覆盖成临时程序——实测反复发生，
+    /// 而 Codex 只会报 "wrote non-UTF-8 data" 这种毫无指向性的错。默认值仅作为
+    /// 兜底（<c>ChatGptAccountManager.exe</c>），真实应用必须传入自己的路径。</para>
+    /// </param>
+    public CodexConfigStore(string? userProfile = null, string? appExecutablePath = null)
     {
         var profile = string.IsNullOrWhiteSpace(userProfile)
             ? Environment.GetFolderPath(Environment.SpecialFolder.UserProfile)
             : userProfile;
         CodexHome = Path.Combine(profile, ".codex");
         ConfigPath = Path.Combine(CodexHome, "config.toml");
+        AppExecutablePath = string.IsNullOrWhiteSpace(appExecutablePath) ? null : appExecutablePath;
     }
 
     public string CodexHome { get; }
     public string ConfigPath { get; }
+
+    /// <summary>
+    /// 写进 <c>auth.command</c> 的可执行文件路径。为 null 时表示调用方未指定，
+    /// 此时不该新建命令式条目（见构造函数说明）。
+    /// </summary>
+    public string? AppExecutablePath { get; init; }
 
     public async Task<CodexConfigSnapshot> LoadAsync(CancellationToken cancellationToken = default)
     {
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            return Parse((await ReadRawAsync(cancellationToken).ConfigureAwait(false)).Text);
+            return Parse((await ReadRawAsync(cancellationToken).ConfigureAwait(false)).Text, TokenCommandPath());
         }
         finally
         {
@@ -164,7 +184,7 @@ public sealed class CodexConfigStore : IDisposable
         try
         {
             var original = await ReadRawAsync(cancellationToken).ConfigureAwait(false);
-            var updated = BuildThirdPartyConfig(original, provider, catalogPath, apiToken);
+            var updated = BuildThirdPartyConfig(original, provider, catalogPath, apiToken, TokenCommandPath());
             return await WriteWithValidationAsync(original, updated, cancellationToken).ConfigureAwait(false);
         }
         finally
@@ -204,7 +224,7 @@ public sealed class CodexConfigStore : IDisposable
         try
         {
             var original = await ReadRawAsync(cancellationToken).ConfigureAwait(false);
-            return BuildThirdPartyConfig(original, provider, catalogPath, apiToken).Text;
+            return BuildThirdPartyConfig(original, provider, catalogPath, apiToken, TokenCommandPath()).Text;
         }
         finally
         {
@@ -266,6 +286,15 @@ public sealed class CodexConfigStore : IDisposable
             var expected = TokenCommandPath();
             if (string.Equals(stored, expected, StringComparison.OrdinalIgnoreCase)) return null;
 
+            // 只在记录的路径**已经不指向任何文件**时才重写。
+            //
+            // 这条约束是防污染的：路径有效说明配置是好的，没有可修的东西。若此处按
+            // "与 expected 不同就改"，任何辅助程序（测试、调试脚手架）只要用自己注入的
+            // 路径调一次，就会把用户正确的配置覆盖成一个临时 exe——实测反复发生，
+            // 之后 Codex 只会报 "wrote non-UTF-8 data"，用户完全看不出是路径问题。
+            // 真正需要修的场景（应用被移动/改名）恰好就是旧路径失效，所以这不损失功能。
+            if (File.Exists(stored)) return null;
+
             var patched = new List<string>(lines.Count);
             var replaced = false;
             foreach (var line in lines)
@@ -309,7 +338,8 @@ public sealed class CodexConfigStore : IDisposable
     // ---------- 构建 ----------
 
     private static RawConfig BuildThirdPartyConfig(
-        RawConfig original, ProviderDefinition provider, string catalogPath, string? apiToken)
+        RawConfig original, ProviderDefinition provider, string catalogPath, string? apiToken,
+        string tokenCommandPath)
     {
         var lines = SplitLines(original.Text);
 
@@ -331,6 +361,13 @@ public sealed class CodexConfigStore : IDisposable
         lines = SetTopLevelKey(lines, "model", TomlString(provider.Models[0].Slug));
         lines = SetTopLevelKey(lines, "model_provider", TomlString(provider.SafeTomlKey()));
         lines = SetTopLevelKey(lines, "model_catalog_json", TomlLiteral(catalogPath));
+
+        // 联网搜索：端点不支持时必须显式写成 disabled，Codex 才会把 web_search 工具
+        // 从请求里摘掉——这是唯一的开关（目录里的 web_search_tool_type 只管形态）。
+        // 支持时把控制权还给用户：还原改动前的值，原本没设就删掉这个键。
+        lines = provider.SupportsWebSearch
+            ? RestoreTopLevelKey(lines, recordedHead, "web_search")
+            : SetTopLevelKey(lines, "web_search", TomlString("disabled"));
 
         // 追加 provider 定义。
         //
@@ -359,7 +396,7 @@ public sealed class CodexConfigStore : IDisposable
         {
             // 命令式：Codex 每次（重新）取 token 时调用本应用，配置文件里没有密钥。
             managed.Add(
-                $"auth = {{ command = {TomlLiteral(TokenCommandPath())}, args = [\"--provider-token\", {TomlString(provider.Id)}] }}");
+                $"auth = {{ command = {TomlLiteral(tokenCommandPath)}, args = [\"--provider-token\", {TomlString(provider.Id)}] }}");
         }
 
         // 顶层区域记录：放在 provider 表之后，作为一行注释。
@@ -724,6 +761,29 @@ public sealed class CodexConfigStore : IDisposable
         return lines;
     }
 
+    /// <summary>
+    /// 把某个顶层键还原成"用户改动前的那一行"；原始配置里没有这个键就删掉它。
+    ///
+    /// <para>用于 <c>web_search</c> 这类我们只在特定端点下才需要覆盖的键：切到支持它的
+    /// 端点时必须把控制权交还用户，而不是把上一个端点写下的 <c>disabled</c> 留着——
+    /// 那等于替用户永久关掉了联网搜索。</para>
+    /// </summary>
+    private static List<string> RestoreTopLevelKey(List<string> lines, string headPayload, string key)
+    {
+        var original = DecodeHead(headPayload);
+        var originalLine = original is null
+            ? null
+            : original.Take(IndexOfFirstTable(original)).FirstOrDefault(l => TryMatchKey(l, key));
+
+        lines = RemoveTopLevelKey(lines, key);
+        if (originalLine is null) return lines;
+
+        var equals = originalLine.IndexOf('=');
+        return equals < 0
+            ? lines
+            : SetTopLevelKey(lines, key, originalLine[(equals + 1)..].Trim());
+    }
+
     /// <summary>判断某行是否为给定顶层键的赋值（忽略缩进与注释行）。</summary>
     private static bool TryMatchKey(string line, string key)
     {
@@ -754,13 +814,17 @@ public sealed class CodexConfigStore : IDisposable
     /// 命令式取 token 时执行的程序路径：即本应用自身。
     /// 用主模块路径而非 Assembly.Location——单文件发布下后者是空串。
     /// </summary>
-    private static string TokenCommandPath()
+    private string TokenCommandPath()
     {
-        var path = Environment.ProcessPath;
-        if (!string.IsNullOrWhiteSpace(path)) return path;
+        // 只用调用方显式提供的路径。绝不回落到 Environment.ProcessPath：那是"谁加载了
+        // 这个库"而不是"谁是这个应用"，会让任何测试/辅助程序把自己的 exe 写进用户配置。
+        if (!string.IsNullOrWhiteSpace(AppExecutablePath)) return AppExecutablePath;
 
-        var module = System.Diagnostics.Process.GetCurrentProcess().MainModule?.FileName;
-        return module ?? "ChatGptAccountManager.exe";
+        // 未指定时的兜底：用与库同目录的正式程序名，至少不会指向一个临时脚手架。
+        var baseDir = AppContext.BaseDirectory;
+        return string.IsNullOrWhiteSpace(baseDir)
+            ? "ChatGptAccountManager.exe"
+            : Path.Combine(baseDir, "ChatGptAccountManager.exe");
     }
 
     // ---------- 读写 ----------
@@ -879,10 +943,13 @@ public sealed class CodexConfigStore : IDisposable
         lines = RemoveTopLevelKey(lines, "model");
         lines = RemoveTopLevelKey(lines, "model_provider");
         lines = RemoveTopLevelKey(lines, "model_catalog_json");
+        // web_search 由我们按端点能力改写，不算用户内容——否则每次切换的写入校验
+        // 都会判成"管理范围外被改动"而整体中止。
+        lines = RemoveTopLevelKey(lines, "web_search");
         return string.Join('\n', lines);
     }
 
-    private static CodexConfigSnapshot Parse(string content)
+    private static CodexConfigSnapshot Parse(string content, string tokenCommandPath)
     {
         if (string.IsNullOrWhiteSpace(content))
         {
@@ -930,7 +997,7 @@ public sealed class CodexConfigStore : IDisposable
             HasLegacyBlockLayout = legacyLayout,
             CatalogFileExists = !string.IsNullOrWhiteSpace(catalog) && File.Exists(catalog),
             StoredTokenCommandPath = tokenCommand,
-            ExpectedTokenCommandPath = TokenCommandPath(),
+            ExpectedTokenCommandPath = tokenCommandPath,
             TokenCommandExists = string.IsNullOrWhiteSpace(tokenCommand) || File.Exists(tokenCommand),
         };
     }

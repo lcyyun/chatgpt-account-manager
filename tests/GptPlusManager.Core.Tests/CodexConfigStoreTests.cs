@@ -63,6 +63,56 @@ public sealed class CodexConfigStoreTests
         return catalogPath;
     }
 
+    /// <summary>
+    /// 一个带官方 <c>models_cache.json</c> 模板的临时用户目录。
+    ///
+    /// <para>目录生成必须克隆官方条目（手写最小条目会在 <c>support_verbosity</c>、
+    /// <c>model_messages</c> 等必填字段上报 parse error），所以测试也得喂它一份模板。
+    /// 这里用官方条目的真实字段子集，且<b>带 <c>apply_patch_tool_type</c></b>——
+    /// 被测逻辑正是"要不要把它剥掉"。</para>
+    /// </summary>
+    private sealed class TempCatalogProfile : IDisposable
+    {
+        private readonly TemporaryDirectory _dir = new();
+
+        public TempCatalogProfile()
+        {
+            var codexHome = System.IO.Path.Combine(_dir.Path, ".codex");
+            Directory.CreateDirectory(codexHome);
+            File.WriteAllText(System.IO.Path.Combine(codexHome, "models_cache.json"), Template);
+        }
+
+        public string Path => _dir.Path;
+
+        public void Dispose() => _dir.Dispose();
+
+        private const string Template = """
+            {
+              "models": [
+                {
+                  "slug": "gpt-5.5",
+                  "display_name": "GPT-5.5",
+                  "description": "official",
+                  "default_reasoning_level": "medium",
+                  "supported_reasoning_levels": [ { "effort": "medium", "description": "Balanced" } ],
+                  "shell_type": "shell_command",
+                  "visibility": "list",
+                  "supported_in_api": true,
+                  "priority": 1,
+                  "support_verbosity": true,
+                  "apply_patch_tool_type": "freeform",
+                  "web_search_tool_type": "text_and_image",
+                  "experimental_supported_tools": [],
+                  "supports_search_tool": true,
+                  "use_responses_lite": false,
+                  "model_messages": { "instructions_template": "You are a coding agent." },
+                  "input_modalities": [ "text" ]
+                }
+              ]
+            }
+            """;
+    }
+
     [Fact]
     public async Task ApplyThirdParty_WritesThreeTopLevelKeysAndProviderBlock()
     {
@@ -273,6 +323,110 @@ public sealed class CodexConfigStoreTests
         Assert.Equal(UserContentOf(original), UserContentOf(after));
     }
 
+    // ---- 端点能力：按实测裁剪工具形态 ----
+
+    /// <summary>
+    /// 不勾"自定义工具"时，目录里不能出现 <c>apply_patch_tool_type</c>。
+    ///
+    /// <para>它会让 Codex 发 <c>type: "custom"</c> 的工具，实测小米端点以
+    /// "custom tools require MiMo freeform Responses lite mode" 拒绝整个请求
+    /// （DeepSeek 接受）。该字段在 Codex 里只有 Freeform 一个取值，
+    /// 所以"不支持"只能用整个字段省略来表达。</para>
+    /// </summary>
+    [Fact]
+    public async Task Catalog_StripsApplyPatchToolType_WhenCustomToolsUnsupported()
+    {
+        using var profile = new TempCatalogProfile();
+        var builder = new ModelCatalogBuilder(profile.Path);
+
+        var provider = MakeProvider();
+        provider.SupportsCustomTools = false;
+        var output = Path.Combine(profile.Path, "off.json");
+        await builder.BuildAsync(provider, output);
+
+        var json = await File.ReadAllTextAsync(output);
+        Assert.DoesNotContain("apply_patch_tool_type", json);
+    }
+
+    [Fact]
+    public async Task Catalog_KeepsApplyPatchToolType_WhenCustomToolsSupported()
+    {
+        using var profile = new TempCatalogProfile();
+        var builder = new ModelCatalogBuilder(profile.Path);
+
+        var provider = MakeProvider();
+        provider.SupportsCustomTools = true;
+        var output = Path.Combine(profile.Path, "on.json");
+        await builder.BuildAsync(provider, output);
+
+        var json = await File.ReadAllTextAsync(output);
+        Assert.Contains("apply_patch_tool_type", json);
+    }
+
+    /// <summary>端点不支持联网搜索时，必须显式写 disabled —— 这是让 Codex 摘掉该工具的唯一开关。</summary>
+    [Fact]
+    public async Task ApplyThirdParty_WritesWebSearchDisabled_WhenEndpointLacksIt()
+    {
+        using var profile = new TemporaryDirectory();
+        await SeedAsync(profile);
+        using var store = new CodexConfigStore(profile.Path);
+
+        var provider = MakeProvider();
+        provider.SupportsWebSearch = false;
+        await store.ApplyThirdPartyAsync(provider, MakeCatalog(profile), null);
+
+        var text = await File.ReadAllTextAsync(store.ConfigPath);
+        Assert.Contains("web_search = \"disabled\"", text);
+    }
+
+    /// <summary>
+    /// 端点支持时要"还政于用户"：不能把上一个端点写下的 disabled 留着，
+    /// 那等于替用户永久关掉联网搜索。原本没设过就应把键删掉。
+    /// </summary>
+    [Fact]
+    public async Task ApplyThirdParty_RestoresUserWebSearchValue_WhenEndpointSupportsIt()
+    {
+        using var profile = new TemporaryDirectory();
+        await SeedAsync(profile, RealisticConfig.Replace(
+            "sandbox_mode = \"danger-full-access\"",
+            "sandbox_mode = \"danger-full-access\"\nweb_search = \"live\""));
+        using var store = new CodexConfigStore(profile.Path);
+
+        // 先用不支持搜索的端点切一次，写下 disabled。
+        var limited = MakeProvider();
+        limited.SupportsWebSearch = false;
+        await store.ApplyThirdPartyAsync(limited, MakeCatalog(profile), null);
+        Assert.Contains("web_search = \"disabled\"", await File.ReadAllTextAsync(store.ConfigPath));
+
+        // 再切到支持搜索的端点：用户原来的 live 必须回来。
+        var full = MakeProvider();
+        full.SupportsWebSearch = true;
+        await store.ApplyThirdPartyAsync(full, MakeCatalog(profile), null);
+
+        var text = await File.ReadAllTextAsync(store.ConfigPath);
+        Assert.Contains("web_search = \"live\"", text);
+        Assert.DoesNotContain("web_search = \"disabled\"", text);
+    }
+
+    /// <summary>用户原本没有 web_search 时，切到支持它的端点不应凭空造出一个键。</summary>
+    [Fact]
+    public async Task ApplyThirdParty_DropsWebSearchKey_WhenUserNeverSetIt()
+    {
+        using var profile = new TemporaryDirectory();
+        await SeedAsync(profile);
+        using var store = new CodexConfigStore(profile.Path);
+
+        var limited = MakeProvider();
+        limited.SupportsWebSearch = false;
+        await store.ApplyThirdPartyAsync(limited, MakeCatalog(profile), null);
+
+        var full = MakeProvider();
+        full.SupportsWebSearch = true;
+        await store.ApplyThirdPartyAsync(full, MakeCatalog(profile), null);
+
+        Assert.DoesNotContain("web_search", await File.ReadAllTextAsync(store.ConfigPath));
+    }
+
     [Fact]
     public async Task ApplyThirdParty_PlainTokenMode_WritesBearerTokenAndKeepsOpenAiAuth()
     {
@@ -469,9 +623,77 @@ public sealed class CodexConfigStoreTests
 
         var snapshot = await store.LoadAsync();
 
-        // The command points at the running test host, which exists -> valid.
+        // 命令式条目里记的必须是**注入的**路径。这里断言的是"注入生效"，
+        // 而不是"等于某个进程路径"——后者正是会把辅助程序写进用户配置的那个 bug。
         Assert.False(string.IsNullOrWhiteSpace(snapshot.StoredTokenCommandPath));
+        Assert.Contains("ChatGptAccountManager.exe", snapshot.StoredTokenCommandPath!);
+
+        // 这个临时目录里没有真的放一个 exe，所以"文件存在"应为 false；
+        // 快照报 false 才能让界面提示用户"程序被移动了，请重新应用"。
+        Assert.False(snapshot.TokenCommandExists);
+    }
+
+    /// <summary>exe 确实存在时，快照要报"有效"。</summary>
+    [Fact]
+    public async Task Snapshot_ReportsTokenCommandValid_WhenExecutableExists()
+    {
+        using var profile = new TemporaryDirectory();
+        await SeedAsync(profile);
+        var appPath = System.IO.Path.Combine(profile.Path, "App", "ChatGptAccountManager.exe");
+        Directory.CreateDirectory(System.IO.Path.GetDirectoryName(appPath)!);
+        await File.WriteAllTextAsync(appPath, string.Empty);
+
+        using var store = new CodexConfigStore(profile.Path, appPath);
+        await store.ApplyThirdPartyAsync(MakeProvider(), MakeCatalog(profile), null);
+
+        var snapshot = await store.LoadAsync();
         Assert.True(snapshot.TokenCommandExists);
+        Assert.True(snapshot.TokenCommandMatchesCurrentApp);
+    }
+
+    /// <summary>
+    /// 注入的 exe 路径必须原样写进 <c>auth.command</c>，且快照把它报成"与当前应用一致"。
+    /// </summary>
+    [Fact]
+    public async Task ApplyThirdParty_UsesInjectedExecutablePath_NotTheHostProcessPath()
+    {
+        using var profile = new TemporaryDirectory();
+        await SeedAsync(profile);
+        var appPath = System.IO.Path.Combine(profile.Path, "App", "ChatGptAccountManager.exe");
+        using var store = new CodexConfigStore(profile.Path, appPath);
+
+        await store.ApplyThirdPartyAsync(MakeProvider(), MakeCatalog(profile), null);
+
+        var text = await File.ReadAllTextAsync(store.ConfigPath);
+        Assert.Contains(appPath.Replace("\\", "\\"), text);
+
+        // 关键：绝不能出现测试宿主自己的 exe（testhost / dotnet）。
+        Assert.DoesNotContain("testhost", text, StringComparison.OrdinalIgnoreCase);
+
+        var snapshot = await store.LoadAsync();
+        Assert.Equal(appPath, snapshot.StoredTokenCommandPath);
+        Assert.True(snapshot.TokenCommandMatchesCurrentApp);
+    }
+
+    /// <summary>程序被移动后，快照要能把路径不一致报出来，供界面提示修复。</summary>
+    [Fact]
+    public async Task Snapshot_FlagsTokenCommandNotMatchingInjectedPath()
+    {
+        using var profile = new TemporaryDirectory();
+        await SeedAsync(profile);
+        var moved = System.IO.Path.Combine(profile.Path, "moved", "ChatGptAccountManager.exe");
+
+        using (var original = new CodexConfigStore(profile.Path,
+                   System.IO.Path.Combine(profile.Path, "old", "ChatGptAccountManager.exe")))
+        {
+            await original.ApplyThirdPartyAsync(MakeProvider(), MakeCatalog(profile), null);
+        }
+
+        using var current = new CodexConfigStore(profile.Path, moved);
+        var snapshot = await current.LoadAsync();
+
+        Assert.False(snapshot.TokenCommandMatchesCurrentApp);
+        Assert.Equal(moved, snapshot.ExpectedTokenCommandPath);
     }
 
     [Fact]
@@ -586,6 +808,41 @@ public sealed class CodexConfigStoreTests
         var backup = await store.RepairTokenCommandPathAsync();
 
         Assert.Null(backup);
+    }
+
+    /// <summary>
+    /// <b>防污染回归</b>：记录的路径有效时，即使它与注入路径不一致也绝不改写。
+    ///
+    /// <para>这条来自一次真实事故：辅助程序（测试 / 调试脚手架）注入自己的 exe 路径后
+    /// 调用了修复，把用户配置里正确的路径覆盖成了临时程序的路径，Codex 随即报
+    /// "wrote non-UTF-8 data"，用户完全看不出是路径问题。只要"路径指向存在的文件"
+    /// 就说明配置是好的，没有可修的东西。</para>
+    /// </summary>
+    [Fact]
+    public async Task RepairTokenCommandPath_DoesNotClobberAWorkingPath()
+    {
+        using var profile = new TemporaryDirectory();
+        await SeedAsync(profile);
+
+        // 用户配置里指向一个真实存在的程序。
+        var realApp = System.IO.Path.Combine(profile.Path, "Real", "ChatGptAccountManager.exe");
+        Directory.CreateDirectory(System.IO.Path.GetDirectoryName(realApp)!);
+        await File.WriteAllTextAsync(realApp, string.Empty);
+
+        using (var original = new CodexConfigStore(profile.Path, realApp))
+        {
+            await original.ApplyThirdPartyAsync(MakeProvider(), MakeCatalog(profile), null);
+        }
+
+        // 某个辅助程序带着自己的路径调用修复。
+        var scaffolding = System.IO.Path.Combine(profile.Path, "_src", "s.exe");
+        using var intruder = new CodexConfigStore(profile.Path, scaffolding);
+        var backup = await intruder.RepairTokenCommandPathAsync();
+
+        // 什么都没改：没有写入、没有备份，用户配置保持指向那个真实程序。
+        Assert.Null(backup);
+        var snapshot = await intruder.LoadAsync();
+        Assert.Equal(realApp, snapshot.StoredTokenCommandPath);
     }
 
     [Fact]
@@ -703,7 +960,7 @@ public sealed class CodexConfigStoreTests
             var eq = trimmed.IndexOf('=');
             if (eq < 0) continue;
             var key = trimmed[..eq].Trim();
-            if (key is "model" or "model_provider" or "model_catalog_json") kept.RemoveAt(i);
+            if (key is "model" or "model_provider" or "model_catalog_json" or "web_search") kept.RemoveAt(i);
         }
         return string.Join('\n', kept);
     }

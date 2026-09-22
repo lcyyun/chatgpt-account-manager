@@ -181,6 +181,23 @@
                                          Content="明文写入（保留官方账号上下文，但密钥以明文存于 config.toml）"
                                          Foreground="{DynamicResource TextBrush}" Checked="AuthMode_Checked"/>
 
+                            <TextBlock Text="端点能力（按实测勾选，勾错会导致请求被端点拒绝）"
+                                       Style="{StaticResource MutedText}" FontSize="11" Margin="0,16,0,4"/>
+                            <CheckBox x:Name="CustomToolsCheck"
+                                      Content="支持 Codex 自定义工具（apply_patch 等自由文本工具）"
+                                      Foreground="{DynamicResource TextBrush}"
+                                      AutomationProperties.AutomationId="CustomToolsCheck"
+                                      ToolTip="勾上后 Codex 会发送 type: &quot;custom&quot; 的工具。小米等端点会以 &quot;custom tools require ... Responses lite mode&quot; 拒绝，故默认不勾。"
+                                      Checked="Capability_Changed" Unchecked="Capability_Changed"/>
+                            <CheckBox x:Name="WebSearchCheck" Margin="0,6,0,0"
+                                      Content="支持联网搜索（托管 web_search 工具）"
+                                      Foreground="{DynamicResource TextBrush}"
+                                      AutomationProperties.AutomationId="WebSearchCheck"
+                                      ToolTip="勾上后 Codex 会发送 web_search 工具并保持你的联网搜索设置。小米等端点会以 &quot;tool type 'web_search' is not supported&quot; 拒绝，故默认不勾，此时会写入 web_search = &quot;disabled&quot;。"
+                                      Checked="Capability_Changed" Unchecked="Capability_Changed"/>
+                            <TextBlock x:Name="CapabilityHintText" Style="{StaticResource MutedText}"
+                                       FontSize="11" TextWrapping="Wrap" Margin="0,5,0,0"/>
+
                             <Grid Margin="0,14,0,4">
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="*"/>

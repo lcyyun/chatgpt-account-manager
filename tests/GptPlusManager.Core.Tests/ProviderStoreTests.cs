@@ -38,6 +38,31 @@ public sealed class ProviderStoreTests
         Assert.Equal("acme-small", loaded.Models[1].DisplayName);
     }
 
+    /// <summary>
+    /// 端点能力开关必须能存下来再读回来。它们是"发什么工具给端点"的开关，
+    /// 被序列化悄悄丢掉的话，用户勾了又变回默认，而默认恰恰会让小米这类端点 400。
+    /// </summary>
+    [Fact]
+    public async Task ProviderRegistry_RoundTripsEndpointCapabilities()
+    {
+        using var data = new TemporaryDirectory();
+        var registry = new ProviderRegistry(data.Path);
+        var provider = Sample();
+        provider.SupportsCustomTools = true;
+        provider.SupportsWebSearch = true;
+
+        await registry.SaveAsync([provider], "acme");
+        var loaded = Assert.Single(await registry.LoadAsync());
+
+        Assert.True(loaded.SupportsCustomTools);
+        Assert.True(loaded.SupportsWebSearch);
+
+        // 默认必须是"都不支持"：这是实测出来的最保守取值（小米拒绝两者）。
+        var fresh = new ProviderDefinition();
+        Assert.False(fresh.SupportsCustomTools);
+        Assert.False(fresh.SupportsWebSearch);
+    }
+
     [Fact]
     public async Task ProviderRegistry_DropsBlankModelsAndDeduplicatesProviders()
     {
@@ -272,6 +297,62 @@ public sealed class ProviderStoreTests
             .AsObject()["models"]!.AsArray();
         Assert.Equal(256_000, models[0]!.AsObject()["context_window"]!.GetValue<int>());
         Assert.Equal(100_000, models[1]!.AsObject()["context_window"]!.GetValue<int>());
+    }
+
+    [Fact]
+    public async Task ModelCatalogBuilder_DefaultsToClassicToolProtocol()
+    {
+        using var profile = new TemporaryDirectory();
+        WriteSampleCache(profile);
+        var builder = new ModelCatalogBuilder(profile.Path);
+        var output = Path.Combine(profile.Path, "catalog.json");
+
+        await builder.BuildAsync(CatalogProvider(), output);
+
+        var model = JsonNode.Parse(await File.ReadAllTextAsync(output))!
+            .AsObject()["models"]!.AsArray()[0]!.AsObject();
+
+        // 这是"第三方模型把工具调用当文本吐出来"的根因修复。
+        // code mode 是 Codex 的私有协议：它把工具塞进 input 的 additional_tools，
+        // 用 namespace/custom 表达，还必须带 responses-lite 请求头。
+        // 第三方模型普遍不认，会输出 DSML 之类的文本而不能真正执行工具。
+        // 经典模式用的才是标准 OpenAI function calling。
+        Assert.Null(model["tool_mode"]);
+        Assert.False(model["use_responses_lite"]!.GetValue<bool>());
+    }
+
+    [Fact]
+    public async Task ModelCatalogBuilder_CodeModeOptInRestoresPrivateProtocol()
+    {
+        using var profile = new TemporaryDirectory();
+        WriteSampleCache(profile);
+        var builder = new ModelCatalogBuilder(profile.Path);
+        var output = Path.Combine(profile.Path, "catalog.json");
+        var provider = CatalogProvider();
+        provider.Models[0].Protocol = ToolProtocol.CodeMode;
+
+        await builder.BuildAsync(provider, output);
+
+        var models = JsonNode.Parse(await File.ReadAllTextAsync(output))!
+            .AsObject()["models"]!.AsArray();
+
+        // 明确选了 code mode 才生成私有协议（例如端点自己就是官方后端）。
+        var first = models[0]!.AsObject();
+        Assert.Equal("code_mode_only", first["tool_mode"]!.GetValue<string>());
+        Assert.True(first["use_responses_lite"]!.GetValue<bool>());
+
+        // 未选的模型保持经典模式。
+        Assert.Null(models[1]!.AsObject()["tool_mode"]);
+    }
+
+    [Fact]
+    public void NewModelsDefaultToClassicProtocol()
+    {
+        var model = new ProviderModel { Slug = "m" };
+        Assert.Equal(ToolProtocol.Classic, model.Protocol);
+
+        var provider = new ProviderDefinition { Id = "p", BaseUrl = "https://x/v1" };
+        Assert.Equal(ToolProtocol.Classic, provider.DefaultProtocol);
     }
 
     // ---- ModelCatalogBuilder ----

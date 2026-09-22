@@ -46,8 +46,19 @@ public interface IProviderManagerService : IDisposable
     /// 该模型的目录条目是否启用 responses lite。Codex 会把它翻成请求头发给端点，
     /// 自检必须一致，否则结果与真实使用不符。
     /// </param>
+    /// <param name="protocol">该模型的工具协议；决定工具发在顶层还是 <c>additional_tools</c> 里。</param>
+    /// <param name="supportsCustomTools">
+    /// 供应商是否支持 freeform 自定义工具。不支持的端点（实测：小米）会拒绝整个请求，
+    /// 所以自检也不能带上它。
+    /// </param>
+    /// <param name="supportsWebSearch">
+    /// 供应商是否支持托管 <c>web_search</c> 工具。不支持的端点（实测：小米）同样会拒绝。
+    /// </param>
     Task<ConnectionTestReport> TestConnectionAsync(
         string baseUrl, string? apiKey, string model, bool usesResponsesLite,
+        ToolProtocol protocol = ToolProtocol.Classic,
+        bool supportsCustomTools = false,
+        bool supportsWebSearch = false,
         CancellationToken cancellationToken = default);
 
     /// <summary>回到官方模式。返回备份文件路径（无改动时为 null）。</summary>

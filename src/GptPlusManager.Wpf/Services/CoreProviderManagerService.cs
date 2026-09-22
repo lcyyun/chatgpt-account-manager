@@ -16,9 +16,14 @@ public sealed class CoreProviderManagerService : IProviderManagerService
 
     /// <param name="userProfile">用户主目录（决定 <c>~/.codex</c> 位置）；测试可注入临时目录。</param>
     /// <param name="dataRoot">供应商定义的存放目录；默认与应用的其它数据同处 Documents\gptplus。</param>
-    public CoreProviderManagerService(string? userProfile = null, string? dataRoot = null)
+    /// <param name="appExecutablePath">
+    /// 本应用 exe 的路径，会被写进 config.toml 的 <c>auth.command</c>。
+    /// 留空则回落到与库同目录的 <c>ChatGptAccountManager.exe</c>。
+    /// </param>
+    public CoreProviderManagerService(string? userProfile = null, string? dataRoot = null,
+        string? appExecutablePath = null)
     {
-        _config = new CodexConfigStore(userProfile);
+        _config = new CodexConfigStore(userProfile, appExecutablePath);
         _registry = new ProviderRegistry(dataRoot);
         _secrets = new ProviderSecrets(dataRoot);
         _catalogs = new ModelCatalogBuilder(userProfile);
@@ -172,6 +177,9 @@ public sealed class CoreProviderManagerService : IProviderManagerService
 
     public async Task<ConnectionTestReport> TestConnectionAsync(
         string baseUrl, string? apiKey, string model, bool usesResponsesLite,
+        ToolProtocol protocol = ToolProtocol.Classic,
+        bool supportsCustomTools = false,
+        bool supportsWebSearch = false,
         CancellationToken cancellationToken = default)
     {
         // 自检要与真实请求一致：Codex 会把目录里的 use_responses_lite 翻成请求头。
@@ -180,7 +188,9 @@ public sealed class CoreProviderManagerService : IProviderManagerService
             .TemplateUsesResponsesLiteAsync(cancellationToken)
             .ConfigureAwait(false);
 
-        return await _tester.TestAsync(baseUrl, apiKey, model, lite, cancellationToken).ConfigureAwait(false);
+        return await _tester.TestAsync(
+            baseUrl, apiKey, model, lite,
+            protocol, supportsCustomTools, supportsWebSearch, cancellationToken).ConfigureAwait(false);
     }
 
     public async Task<string?> ApplyOfficialAsync(CancellationToken cancellationToken = default)

@@ -17,6 +17,7 @@ public sealed class ModelEditorWindow : Window
     private readonly TextBox _displayBox;
     private readonly TextBox _windowBox;
     private readonly CheckBox _imagesCheck;
+    private readonly ComboBox _protocolBox;
     private ProviderModel? _result;
 
     private ModelEditorWindow(Window? owner, ProviderModel model, bool isNew)
@@ -39,6 +40,17 @@ public sealed class ModelEditorWindow : Window
             Foreground = Brush("TextBrush"),
             Margin = new Thickness(0, 4, 0, 0),
         };
+
+        // 工具协议：默认经典模式。第三方模型几乎都按标准 function calling 训练，
+        // 用 Codex 的私有 code mode 会把工具调用当文本吐出来。
+        _protocolBox = new ComboBox
+        {
+            Style = (Style)FindResource("ModernTextBox"),
+            Margin = new Thickness(0),
+        };
+        _protocolBox.Items.Add("经典模式 — 标准 function calling（推荐）");
+        _protocolBox.Items.Add("Code mode — Codex 私有协议（仅官方后端支持）");
+        _protocolBox.SelectedIndex = model.Protocol == ToolProtocol.CodeMode ? 1 : 0;
 
         var save = new Button
         {
@@ -82,6 +94,18 @@ public sealed class ModelEditorWindow : Window
             Foreground = Brush("MutedBrush"),
         });
         panel.Children.Add(_imagesCheck);
+        panel.Children.Add(Label("工具协议", top: 14));
+        panel.Children.Add(_protocolBox);
+        panel.Children.Add(new TextBlock
+        {
+            Text = "经典模式用标准 function calling，第三方模型与中转站基本都支持。" +
+                   "Code mode 是 Codex 的私有协议，只有官方后端认得——" +
+                   "选错会表现为模型把工具调用当普通文字输出、命令不执行。",
+            FontSize = 11,
+            TextWrapping = TextWrapping.Wrap,
+            Margin = new Thickness(0, 4, 0, 0),
+            Foreground = Brush("MutedBrush"),
+        });
         panel.Children.Add(buttons);
 
         Content = new Border
@@ -122,6 +146,7 @@ public sealed class ModelEditorWindow : Window
             DisplayName = _displayBox.Text.Trim(),
             ContextWindow = window,
             SupportsImages = _imagesCheck.IsChecked == true,
+            Protocol = _protocolBox.SelectedIndex == 1 ? ToolProtocol.CodeMode : ToolProtocol.Classic,
             Enabled = true,
         };
         _result.Normalize();

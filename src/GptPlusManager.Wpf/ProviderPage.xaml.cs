@@ -227,8 +227,23 @@ public partial class ProviderPage : UserControl
             _ => tokens.ToString(),
         };
 
-        public bool HasFlags => Model.SupportsImages;
-        public string FlagBadge => "vision";
+        public bool HasFlags => true;
+
+        /// <summary>
+        /// 徽章文案：图片能力与工具协议。
+        /// 协议只在非常规值（Code mode）时显示——它是"多数情况会坏"的信号，
+        /// 摆在行上比藏进编辑框更容易发现问题。
+        /// </summary>
+        public string FlagBadge
+        {
+            get
+            {
+                var parts = new List<string>();
+                if (Model.SupportsImages) parts.Add("vision");
+                if (Model.Protocol == ToolProtocol.CodeMode) parts.Add("code mode");
+                return string.Join(" · ", parts);
+            }
+        }
 
         /// <summary>开关双向回写：关掉的模型不参与目录生成。</summary>
         public bool Enabled
@@ -314,6 +329,9 @@ public partial class ProviderPage : UserControl
         ModelEmptyHint.Visibility = Visibility.Collapsed;
         StatusText.Text = string.Empty;
         CommandAuthRadio.IsChecked = true;
+        CustomToolsCheck.IsChecked = false;
+        WebSearchCheck.IsChecked = false;
+        UpdateCapabilityHint();
     }
 
     private ProviderDefinition? Selected => (ProviderList.SelectedItem as ProviderRow)?.Definition;
@@ -339,6 +357,9 @@ public partial class ProviderPage : UserControl
             BaseUrlBox.Text = provider.BaseUrl;
             CommandAuthRadio.IsChecked = provider.AuthMode == ProviderAuthMode.Command;
             PlainTokenAuthRadio.IsChecked = provider.AuthMode == ProviderAuthMode.PlainToken;
+            CustomToolsCheck.IsChecked = provider.SupportsCustomTools;
+            WebSearchCheck.IsChecked = provider.SupportsWebSearch;
+            UpdateCapabilityHint();
             RenderModels(provider);
 
             // 永远不把已保存的密钥填回输入框：读不出来时就显示"已保存"，
@@ -522,6 +543,7 @@ public partial class ProviderPage : UserControl
         row.Model.DisplayName = edited.DisplayName;
         row.Model.ContextWindow = edited.ContextWindow;
         row.Model.SupportsImages = edited.SupportsImages;
+        row.Model.Protocol = edited.Protocol;
         row.Refresh();
         SyncModelsFromRows();
         StatusText.Text = "模型已修改。记得点上方「保存供应商」。";
@@ -573,7 +595,14 @@ public partial class ProviderPage : UserControl
                 return;
             }
 
-            var report = await _service.TestConnectionAsync(baseUrl, key, slug, usesResponsesLite: false);
+            // 自检必须照抄这个模型的实际工具形态，否则会替一个能用的配置报故障：
+            // 端点接不接受取决于发的是 function 还是 custom、有没有 web_search。
+            var report = await _service.TestConnectionAsync(
+                baseUrl, key, slug,
+                usesResponsesLite: row.Model.Protocol == ToolProtocol.CodeMode,
+                protocol: row.Model.Protocol,
+                supportsCustomTools: provider.SupportsCustomTools,
+                supportsWebSearch: provider.SupportsWebSearch);
             StatusText.Text = report.Success
                 ? $"{slug} 自检通过。"
                 : $"{slug} 自检未通过，详见弹窗。";
@@ -595,6 +624,41 @@ public partial class ProviderPage : UserControl
         provider.AuthMode = PlainTokenAuthRadio.IsChecked == true
             ? ProviderAuthMode.PlainToken
             : ProviderAuthMode.Command;
+    }
+
+    /// <summary>
+    /// 端点能力开关。默认都关——见 <see cref="ProviderDefinition.SupportsCustomTools"/>。
+    /// 勾错不会静默降级：Codex 会把工具原样发出去，由端点 400 拒绝，
+    /// 所以这里给出明确的后果提示。
+    /// </summary>
+    private void Capability_Changed(object sender, RoutedEventArgs e)
+    {
+        if (Selected is not { } provider) return;
+
+        if (!_loading && !_syncing)
+        {
+            provider.SupportsCustomTools = CustomToolsCheck.IsChecked == true;
+            provider.SupportsWebSearch = WebSearchCheck.IsChecked == true;
+        }
+
+        UpdateCapabilityHint();
+    }
+
+    private void UpdateCapabilityHint()
+    {
+        var parts = new List<string>();
+        if (CustomToolsCheck.IsChecked != true)
+        {
+            parts.Add("不发送自定义工具（apply_patch 会退回标准 function 形式）");
+        }
+        if (WebSearchCheck.IsChecked != true)
+        {
+            parts.Add("不发送联网搜索工具，切换时会写入 web_search = \"disabled\"");
+        }
+
+        CapabilityHintText.Text = parts.Count == 0
+            ? "两项都发。仅在端点确实支持时才这样选，否则请求会被拒绝。"
+            : "切换后：" + string.Join("；", parts) + "。";
     }
 
     /// <summary>
@@ -791,9 +855,14 @@ public partial class ProviderPage : UserControl
                     return;
                 }
 
+                var searchNote = provider.SupportsWebSearch
+                    ? "联网搜索：保留你的设置。"
+                    : "联网搜索：该端点不支持，切换后会关掉（切回官方时自动还原你的原设置）。";
+
                 var confirm = MessageBox.Show(
                     $"切换到第三方模式并重启 Codex？\n\n供应商：{provider.DisplayName}\n模型：{provider.Models.Count} 个\n\n" +
-                    "官方模型在第三方模式下不显示也不可用。切换前会自动备份 config.toml，登录状态不受影响。",
+                    "官方模型在第三方模式下不显示也不可用。切换前会自动备份 config.toml，登录状态与插件不受影响。\n\n" +
+                    searchNote,
                     "切换模式", MessageBoxButton.OKCancel, MessageBoxImage.Question);
                 if (confirm != MessageBoxResult.OK) return;
 

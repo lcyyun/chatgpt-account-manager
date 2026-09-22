@@ -117,10 +117,35 @@ public sealed class ModelCatalogBuilder
         entry["visibility"] = "list";
         entry["supported_in_api"] = true;
 
+        // 工具协议：决定 Codex 怎么把工具描述发给端点。
+        //
+        // 这是第三方接入能否真正调用工具的关键。模板来自官方条目，因此默认带着
+        // Codex 的私有 code mode（additional_tools + namespace/custom + lite 头）；
+        // 第三方模型普遍不认这套，会把工具调用当文本吐出来。经典模式用的才是
+        // 标准 OpenAI function calling，所以默认按经典模式生成。
+        if (model.Protocol == ToolProtocol.Classic)
+        {
+            entry.Remove("tool_mode");
+            entry["use_responses_lite"] = false;
+        }
+        else
+        {
+            entry["tool_mode"] = "code_mode_only";
+            entry["use_responses_lite"] = true;
+        }
+
         // 上下文窗口按模型取值（供应商级默认已在 Normalize 时同步下来）。
         var window = model.ContextWindow > 0 ? model.ContextWindow!.Value : DefaultContextWindow;
         entry["context_window"] = window;
         entry["max_context_window"] = window;
+
+        // 工具形态按端点能力裁剪。这是第三方接入最尖锐的一处不兼容：
+        //
+        // apply_patch_tool_type = "freeform" 会让 Codex 在 tools 里发一个
+        // type: "custom" 的工具（自由文本参数），实测小米端点直接以
+        // "custom tools require MiMo freeform Responses lite mode" 拒绝整个请求。
+        // 该字段在 Codex 里只有 Freeform 一个取值，所以"不支持"只能靠整个字段省略表达。
+        if (!provider.SupportsCustomTools) entry.Remove("apply_patch_tool_type");
 
         // 第三方端点不保证支持托管工具，关掉比让请求 400 好。
         entry.Remove("supports_search_tool");

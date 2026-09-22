@@ -39,6 +39,9 @@ public sealed class ProviderConnectionTester
         string? apiKey,
         string model,
         bool usesResponsesLite,
+        ToolProtocol protocol = ToolProtocol.Classic,
+        bool supportsCustomTools = false,
+        bool supportsWebSearch = false,
         CancellationToken cancellationToken = default)
     {
         var steps = new List<ConnectionTestStep>();
@@ -80,11 +83,14 @@ public sealed class ProviderConnectionTester
 
         // 第三步：按 Codex 真实发出的形态带工具请求。
         //
-        // Codex 的请求里没有顶层 tools 字段——工具是作为 input 里的 additional_tools 项传的；
-        // 而且目录里的 use_responses_lite 会被翻成同名请求头一起发出。少了任一项，
-        // 本来能用的配置也会被端点拒绝（实测正是如此），所以自检必须照抄这个形态，
-        // 不能自己发明一个"看起来合理"的请求。
-        var withTools = await PostAsync(origin, apiKey, usesResponsesLite, BuildToolRequest(model), cancellationToken)
+        // 形态必须与目录生成器一致，否则自检会误报：Codex 发什么由目录里的
+        // tool_mode / use_responses_lite / apply_patch_tool_type 决定。实测小米端点
+        // 恰好拒绝 custom 工具与 web_search，而 DeepSeek 两者都接受——所以自检
+        // 要照抄"这个供应商的实际配置"，而不是固定发某一种。
+        var withTools = await PostAsync(
+                origin, apiKey, usesResponsesLite,
+                BuildToolRequest(model, protocol, supportsCustomTools, supportsWebSearch),
+                cancellationToken)
             .ConfigureAwait(false);
         if (!withTools.Ok)
         {
@@ -109,43 +115,100 @@ public sealed class ProviderConnectionTester
     }.ToJsonString();
 
     /// <summary>
-    /// 照抄 Codex 真实发出的请求形态。
+    /// 照抄 Codex 真实发出的请求形态，按供应商实际能力裁剪。
     ///
-    /// <para>只发最小请求不够：多数协议差异只在带工具时才暴露。而工具<b>不能</b>放在顶层
-    /// <c>tools</c>——实测那样发会被端点以 <c>unsupported_feature</c> 拒绝，造成
-    /// "本来是好的配置却报故障"的误判。Codex 是把工具作为 <c>additional_tools</c>
-    /// 项放进 <c>input</c> 里的。</para>
+    /// <para>两种协议的工具位置不同：</para>
+    /// <list type="bullet">
+    /// <item><b>Classic</b>（默认）：顶层 <c>tools</c> 数组 + <c>function</c> 类型。
+    /// 这是标准 OpenAI function calling，第三方端点普遍认得。</item>
+    /// <item><b>CodeMode</b>：工具作为 <c>input</c> 里的 <c>additional_tools</c> 项，
+    /// 用 <c>namespace</c> + <c>custom</c> 表达，并附带 lite 请求头。</item>
+    /// </list>
+    ///
+    /// <para><c>supportsCustomTools</c> 决定要不要放 <c>custom</c> 工具——实测小米端点
+    /// 会以 "custom tools require MiMo freeform Responses lite mode" 拒绝整个请求；
+    /// <c>supportsWebSearch</c> 同理（"tool type 'web_search' is not supported"）。
+    /// 自检必须与目录生成保持同一套裁剪规则，否则会替一个能用的配置报故障。</para>
     /// </summary>
-    private static string BuildToolRequest(string model) => new JsonObject
+    private static string BuildToolRequest(
+        string model, ToolProtocol protocol, bool supportsCustomTools, bool supportsWebSearch)
     {
-        ["model"] = model,
-        ["input"] = new JsonArray
+        var execFunction = new JsonObject
         {
-            new JsonObject
+            ["type"] = "function",
+            ["name"] = "exec_command",
+            ["description"] = "self-test tool",
+            ["parameters"] = new JsonObject
             {
-                ["type"] = "additional_tools",
-                ["role"] = "developer",
-                ["tools"] = new JsonArray
+                ["type"] = "object",
+                ["properties"] = new JsonObject
                 {
-                    new JsonObject
+                    ["cmd"] = new JsonObject { ["type"] = "string" },
+                },
+                ["required"] = new JsonArray("cmd"),
+            },
+        };
+
+        var patchCustom = new JsonObject
+        {
+            ["type"] = "custom",
+            ["name"] = "apply_patch",
+            ["description"] = "self-test freeform tool",
+            ["format"] = new JsonObject { ["type"] = "text" },
+        };
+
+        JsonObject request;
+
+        if (protocol == ToolProtocol.CodeMode)
+        {
+            // Code mode：工具全部塞在 input 的一项 additional_tools 里，
+            // 形状实测为 namespace{ namespace{...}, custom }，且顶层没有 tools 字段。
+            var inner = new JsonArray(execFunction.DeepClone());
+            if (supportsCustomTools) inner.Add(patchCustom.DeepClone());
+
+            var additional = new JsonArray
+            {
+                new JsonObject
+                {
+                    ["type"] = "additional_tools",
+                    ["role"] = "developer",
+                    ["tools"] = new JsonArray
                     {
-                        ["type"] = "namespace",
-                        ["name"] = "functions",
-                        ["description"] = string.Empty,
-                        ["tools"] = new JsonArray
+                        new JsonObject
                         {
-                            new JsonObject
-                            {
-                                ["type"] = "custom",
-                                ["name"] = "exec",
-                                ["description"] = "self-test tool",
-                                ["format"] = new JsonObject { ["type"] = "text" },
-                            },
+                            ["type"] = "namespace",
+                            ["name"] = "functions",
+                            ["description"] = string.Empty,
+                            ["tools"] = inner,
                         },
                     },
                 },
-            },
-            new JsonObject
+            };
+
+            // 搜索工具在 code mode 下同样在 additional_tools 的 namespace 内。
+            if (supportsWebSearch)
+            {
+                inner.Add(new JsonObject
+                {
+                    ["type"] = "namespace",
+                    ["name"] = "web",
+                    ["description"] = string.Empty,
+                    ["tools"] = new JsonArray(
+                        new JsonObject
+                        {
+                            ["type"] = "function",
+                            ["name"] = "run",
+                            ["description"] = "self-test search",
+                            ["parameters"] = new JsonObject
+                            {
+                                ["type"] = "object",
+                                ["properties"] = new JsonObject(),
+                            },
+                        }),
+                });
+            }
+
+            additional.Add(new JsonObject
             {
                 ["type"] = "message",
                 ["role"] = "user",
@@ -153,13 +216,48 @@ public sealed class ProviderConnectionTester
                 {
                     new JsonObject { ["type"] = "input_text", ["text"] = "hi" },
                 },
-            },
-        },
-        ["stream"] = false,
-        ["store"] = false,
-        ["tool_choice"] = "auto",
-        ["parallel_tool_calls"] = false,
-    }.ToJsonString();
+            });
+
+            request = new JsonObject
+            {
+                ["model"] = model,
+                ["input"] = additional,
+                ["stream"] = false,
+                ["store"] = false,
+                ["tool_choice"] = "auto",
+            };
+        }
+        else
+        {
+            // Classic：顶层 tools 数组，标准 function 类型。
+            var tools = new JsonArray { execFunction };
+            if (supportsCustomTools) tools.Add(patchCustom);
+            if (supportsWebSearch) tools.Add(new JsonObject { ["type"] = "web_search" });
+
+            request = new JsonObject
+            {
+                ["model"] = model,
+                ["input"] = new JsonArray
+                {
+                    new JsonObject
+                    {
+                        ["type"] = "message",
+                        ["role"] = "user",
+                        ["content"] = new JsonArray
+                        {
+                            new JsonObject { ["type"] = "input_text", ["text"] = "hi" },
+                        },
+                    },
+                },
+                ["tools"] = tools,
+                ["stream"] = false,
+                ["store"] = false,
+                ["tool_choice"] = "auto",
+            };
+        }
+
+        return request.ToJsonString();
+    }
 
     // ---------- 诊断 ----------
 

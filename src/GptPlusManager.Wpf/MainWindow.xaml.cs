@@ -32,7 +32,10 @@ public partial class MainWindow : Window
         InitializeComponent();
         var root = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
         var dataRoot = System.IO.Path.Combine(root, "gptplus");
-        var providerService = new CoreProviderManagerService();
+        // 显式把自己的 exe 路径交给配置写入方。不能让库自己去猜：它猜的是
+        // "谁加载了这个库"，任何辅助程序一调用就会把临时 exe 写进用户配置。
+        var providerService = new CoreProviderManagerService(
+            appExecutablePath: Environment.ProcessPath);
         var viewModel = new MainViewModel(new CoreAccountManagerService(dataRoot), providerService, new WpfUiService());
         DataContext = viewModel;
 
