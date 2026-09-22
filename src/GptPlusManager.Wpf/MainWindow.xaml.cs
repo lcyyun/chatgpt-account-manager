@@ -42,6 +42,7 @@ public partial class MainWindow : Window
         _providerPage = new ProviderPage(providerService);
         _providerPage.StatusChanged += (_, message) => viewModel.ShowToast(message, false);
         _providerPage.CodexRestarted += async (_, _) => await viewModel.RefreshCurrentAccountAsync();
+        _providerPage.ModeChanged += (_, mode) => viewModel.SetRoutingMode(mode);
         viewModel.ProviderPage = _providerPage;
         ThirdPartyPageHost.Content = _providerPage;
 

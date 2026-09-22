@@ -5,6 +5,7 @@ using System.Windows.Data;
 using System.Windows.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using GptPlusManager.Core.Codex;
 using GptPlusManager.Core.Services;
 using GptPlusManager.Wpf.Infrastructure;
 using GptPlusManager.Wpf.Services;
@@ -63,6 +64,25 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     public int VisibleAccountCount => AccountsView.Cast<object>().Count();
     public int InvalidAccountCount => Accounts.Count(x => x.IsInvalid);
     public string KeepAliveText => IsKeepAliveEnabled ? "保活：开" : "保活：关";
+
+    /// <summary>
+    /// 工具栏「应用并重启 Codex」按钮的文案。按当前实际模式变化：
+    /// 在第三方模式下点它会切回官方，在官方模式下点它则应用第三方配置。
+    /// 文案写死成"应用并重启"时，用户看不出它也是切回官方的入口。
+    /// </summary>
+    public string ApplyProviderLabel => _routingMode == CodexRoutingMode.Official
+        ? "应用并重启 Codex"
+        : "切回官方并重启";
+
+    private CodexRoutingMode _routingMode = CodexRoutingMode.Official;
+
+    /// <summary>由 MainWindow 在 ProviderPage 报告模式变化时调用。</summary>
+    public void SetRoutingMode(CodexRoutingMode mode)
+    {
+        if (_routingMode == mode) return;
+        _routingMode = mode;
+        OnPropertyChanged(nameof(ApplyProviderLabel));
+    }
 
     /// <summary>导出目录，显示在状态栏并提供一键打开。</summary>
     public string ExportsDirectory => _service.ExportsDirectory;

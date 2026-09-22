@@ -29,6 +29,15 @@ public partial class ProviderPage : UserControl
     /// <summary>本次载入时是否自动修复了取 token 命令路径（用于提示用户）。</summary>
     private bool _selfHealed;
 
+    /// <summary>
+    /// 上一次从配置读到的实际模式。用来判断用户点单选按钮时是否真的需要切换：
+    /// 与当前模式相同的点击只是同步显示，不该弹确认框去重启 Codex。
+    /// </summary>
+    private CodexRoutingMode? _actualMode;
+
+    /// <summary>正在执行切换，防止连点单选按钮时并发写配置。</summary>
+    private bool _applying;
+
     public ProviderPage(IProviderManagerService service)
     {
         InitializeComponent();
@@ -41,6 +50,13 @@ public partial class ProviderPage : UserControl
 
     /// <summary>切到第三方模式后触发：Codex 已重启，账号页的"当前账号"等缓存需要刷新。</summary>
     public event EventHandler? CodexRestarted;
+
+    /// <summary>
+    /// 配置里的实际路由模式变化时触发。
+    /// 宿主据此更新工具栏按钮的文案——它在官方模式下该写"切回官方"以外的话，
+    /// 写错了用户就不知道该点哪个按钮。
+    /// </summary>
+    public event EventHandler<CodexRoutingMode>? ModeChanged;
 
     /// <summary>进入本页时调用。</summary>
     public async Task ActivateAsync()
@@ -78,6 +94,8 @@ public partial class ProviderPage : UserControl
 
             var snapshot = await _service.GetStatusAsync();
             _selfHealed = selfHealed is not null;
+            _actualMode = snapshot.Mode;
+            ModeChanged?.Invoke(this, snapshot.Mode);
 
             OfficialRadio.IsChecked = snapshot.Mode == CodexRoutingMode.Official;
             ThirdPartyRadio.IsChecked = snapshot.Mode == CodexRoutingMode.ThirdParty;
@@ -724,12 +742,63 @@ public partial class ProviderPage : UserControl
         finally { _syncingKey = false; }
     }
 
-    private void Mode_Checked(object sender, RoutedEventArgs e)
+    /// <summary>
+    /// 点击「路由模式」单选按钮。
+    ///
+    /// <para>这里必须<b>直接执行切换</b>，而不是只改提示文字。这个控件摆在
+    /// 「路由模式」标题下，看起来就是模式开关；只点亮它、真正的切换藏在工具栏另一个
+    /// 按钮里，用户会以为自己点了却没反应——实测正是如此：截图里"官方模式"已选中，
+    /// 当前却仍是第三方，用户的理解是"换不回官方"。</para>
+    ///
+    /// <para>会弹确认框（切换要重启 Codex，属外部影响操作）；用户取消时把单选按钮
+    /// 拨回实际模式，避免留下"显示官方、实际第三方"的错位状态。</para>
+    /// </summary>
+    private async void Mode_Checked(object sender, RoutedEventArgs e)
     {
         if (_loading || _syncing) return;
-        StatusText.Text = ThirdPartyRadio.IsChecked == true
-            ? "点右上「应用并重启 Codex」进入第三方模式。"
-            : "点右上「切回官方并重启」还原 config.toml。";
+
+        var wantsThirdParty = ThirdPartyRadio.IsChecked == true;
+
+        // 与当前实际模式一致（含首次载入后的同步）时不切换，只更新提示。
+        if (_actualMode is not { } actual || wantsThirdParty == (actual == CodexRoutingMode.ThirdParty))
+        {
+            StatusText.Text = wantsThirdParty
+                ? "点右上「应用并重启 Codex」进入第三方模式。"
+                : "点右上「切回官方并重启」还原 config.toml。";
+            return;
+        }
+
+        await ApplyAsync();
+
+        // 无论成功、失败还是用户取消，都把单选按钮对齐到配置的真实状态。
+        await SyncModeRadiosAsync();
+    }
+
+    /// <summary>把单选按钮对齐到配置里的真实模式。</summary>
+    private async Task SyncModeRadiosAsync()
+    {
+        CodexRoutingMode mode;
+        try
+        {
+            mode = (await _service.GetStatusAsync()).Mode;
+        }
+        catch (Exception)
+        {
+            return; // 读不到状态时保持原样，总比乱拨开关好。
+        }
+
+        _actualMode = mode;
+        ModeChanged?.Invoke(this, mode);
+        _loading = true;
+        try
+        {
+            OfficialRadio.IsChecked = mode == CodexRoutingMode.Official;
+            ThirdPartyRadio.IsChecked = mode == CodexRoutingMode.ThirdParty;
+        }
+        finally
+        {
+            _loading = false;
+        }
     }
 
     // ---------- 公开动作（由宿主工具栏调用）----------
@@ -845,6 +914,10 @@ public partial class ProviderPage : UserControl
     /// <summary>按当前选中的单选按钮，应用第三方模式或切回官方模式。</summary>
     public async Task ApplyAsync()
     {
+        // 单选按钮现在会直接触发切换，连点两次就会并发写 config.toml。
+        // 工具栏按钮有 IsBusy 兜着，但这里也必须自己拦一道。
+        if (_applying) return;
+        _applying = true;
         try
         {
             if (ThirdPartyRadio.IsChecked == true)
@@ -898,6 +971,10 @@ public partial class ProviderPage : UserControl
         catch (Exception exception)
         {
             StatusChanged?.Invoke(this, "应用失败：" + exception.Message);
+        }
+        finally
+        {
+            _applying = false;
         }
     }
 }
