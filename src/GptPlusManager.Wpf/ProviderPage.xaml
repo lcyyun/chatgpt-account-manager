@@ -194,8 +194,19 @@
                                 </StackPanel>
                             </Grid>
 
-                            <TextBlock Text="模型列表（每行一个，格式：模型ID 或 模型ID | 显示名）"
-                                       Style="{StaticResource MutedText}" FontSize="11" Margin="0,14,0,4"/>
+                            <Grid Margin="0,14,0,4">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="模型列表（每行一个，格式：模型ID 或 模型ID | 显示名）"
+                                           Style="{StaticResource MutedText}" FontSize="11" VerticalAlignment="Center"/>
+                                <Button Grid.Column="1" x:Name="FetchModelsButton" Content="从端点获取可用模型"
+                                        Style="{StaticResource ModernButton}" Padding="10,5" MinHeight="28" FontSize="12"
+                                        AutomationProperties.AutomationId="FetchModelsButton"
+                                        ToolTip="查询 GET {Base URL}/models，用端点自己声明的写法替换下方列表"
+                                        Click="FetchModels_Click"/>
+                            </Grid>
                             <TextBox x:Name="ModelsBox" Style="{StaticResource ModernTextBox}"
                                      AcceptsReturn="True" TextWrapping="NoWrap" Height="118"
                                      VerticalScrollBarVisibility="Auto" FontFamily="Consolas"

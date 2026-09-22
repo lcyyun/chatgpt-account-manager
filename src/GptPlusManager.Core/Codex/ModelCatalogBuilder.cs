@@ -22,22 +22,26 @@ public sealed record CatalogBuildResult(string OutputPath, IReadOnlyList<string>
 public sealed class ModelCatalogBuilder
 {
     /// <summary>
-    /// 官方条目里只对官方服务有意义的字段。实测这些字段全部可以省略，
-    /// 去掉是为了不让第三方条目带着官方升级话术、加速档与 hash 到处跑。
+    /// 要从官方模板里剥掉、不能带给第三方端点的字段。
+    ///
+    /// <para><b>这份清单要尽量短。</b>剥离等于替第三方声明"不支持"，猜错就废掉一个
+    /// 本来能用的能力——实测 <c>use_responses_lite</c> 就因为被误判成官方品牌字段而
+    /// 剔除，导致小米端点直接拒服务（<c>custom tools require MiMo freeform
+    /// Responses lite mode</c>）。所以只剥<b>确凿</b>属于官方服务或营销的东西。</para>
+    ///
+    /// <para>协议选择器类字段（<c>use_responses_lite</c>）、上下文窗口比例、
+    /// 实验性开关一律保留，它们描述的是"怎么说话"，不是"谁的服务"。</para>
     /// </summary>
     private static readonly string[] OfficialOnlyFields =
     [
-        "availability_nux",              // 官方升级/宣传语
-        "available_access_programs",     // 官方访问计划
-        "service_tiers",                 // 官方 "Fast" 加速档
+        "availability_nux",              // 官方升级弹窗文案
+        "available_access_programs",     // 官方访问计划（cyber 等）
+        "service_tiers",                 // 官方付费 "Fast" 加速档
         "additional_speed_tiers",
-        "upgrade",
+        "upgrade",                       // 升级推销
         "comp_hash",                     // 官方服务端编译 hash
-        "multi_agent_version",           // 官方多智能体协议版本
+        "multi_agent_version",           // 官方多智能体协议，第三方不可能实现
         "multi_agent_reasoning_effort",
-        "use_responses_lite",
-        "effective_context_window_percent",
-        "supports_experimental_context",
     ];
 
     public ModelCatalogBuilder(string? userProfile = null)

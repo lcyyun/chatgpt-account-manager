@@ -185,6 +185,9 @@ public sealed class ProviderStoreTests
             ["service_tiers"] = new JsonArray(new JsonObject { ["id"] = "priority" }),
             ["availability_nux"] = new JsonObject { ["message"] = "official upsell" },
             ["multi_agent_version"] = "v2",
+            // Protocol selectors: these must survive cloning (see the regression test).
+            ["use_responses_lite"] = true,
+            ["effective_context_window_percent"] = 95,
         };
 
         var cachePath = Path.Combine(profile.Path, ".codex", "models_cache.json");
@@ -254,6 +257,28 @@ public sealed class ProviderStoreTests
         Assert.Null(model["service_tiers"]);
         Assert.Null(model["comp_hash"]);
         Assert.Null(model["multi_agent_version"]);
+    }
+
+    [Fact]
+    public async Task ModelCatalogBuilder_KeepsProtocolFields()
+    {
+        using var profile = new TemporaryDirectory();
+        WriteSampleCache(profile);
+        var builder = new ModelCatalogBuilder(profile.Path);
+        var output = Path.Combine(profile.Path, "catalog.json");
+
+        await builder.BuildAsync(CatalogProvider(), output);
+
+        var model = JsonNode.Parse(await File.ReadAllTextAsync(output))!
+            .AsObject()["models"]!.AsArray()[0]!.AsObject();
+
+        // use_responses_lite is a protocol selector, not official branding. Stripping it
+        // made the Xiaomi endpoint reject every request with
+        // "custom tools require MiMo freeform Responses lite mode", so it must survive.
+        Assert.NotNull(model["use_responses_lite"]);
+
+        // Same reasoning: these describe how to talk, not whose service it is.
+        Assert.NotNull(model["effective_context_window_percent"]);
     }
 
     [Fact]

@@ -31,6 +31,13 @@ public interface IProviderManagerService : IDisposable
     /// <summary>生成目录并切入第三方模式。返回备份文件路径。</summary>
     Task<ProviderApplyResult> ApplyThirdPartyAsync(string providerId, CancellationToken cancellationToken = default);
 
+    /// <summary>
+    /// 向端点查询它实际支持的模型 ID。可传未保存的 baseUrl / apiKey，
+    /// 这样用户填完就能先验证，不必先保存。
+    /// </summary>
+    Task<ProviderModelList> FetchModelsAsync(
+        string baseUrl, string? apiKey, CancellationToken cancellationToken = default);
+
     /// <summary>回到官方模式。返回备份文件路径（无改动时为 null）。</summary>
     Task<string?> ApplyOfficialAsync(CancellationToken cancellationToken = default);
 
@@ -50,4 +57,11 @@ public sealed record ProviderApplyResult(
     string BackupPath,
     int ModelCount,
     long CatalogBytes,
-    CodexRoutingMode Mode);
+    CodexRoutingMode Mode,
+    string? Note);
+
+/// <summary>向端点查询可用模型的界面侧包装。</summary>
+public sealed record ProviderModelList(
+    bool Success,
+    IReadOnlyList<string> Models,
+    string? Error);

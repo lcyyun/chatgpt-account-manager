@@ -65,11 +65,20 @@ public partial class ProviderPage : UserControl
             ThirdPartyRadio.IsChecked = snapshot.Mode == CodexRoutingMode.ThirdParty;
 
             var modeName = snapshot.Mode == CodexRoutingMode.ThirdParty ? "第三方模式" : "官方模式";
-            var warning = snapshot.Mode == CodexRoutingMode.ThirdParty && !snapshot.CatalogFileExists
-                ? "　⚠ 目录文件缺失，Codex 将无法启动"
-                : string.Empty;
+            var warnings = new List<string>();
+            if (snapshot.Mode == CodexRoutingMode.ThirdParty)
+            {
+                if (!snapshot.CatalogFileExists) warnings.Add("目录文件缺失，Codex 将无法启动");
+                if (!snapshot.TokenCommandExists)
+                {
+                    warnings.Add("取密钥的命令路径已失效——Codex 会一直取不到 token。" +
+                                 "路径指向的是本程序，移动或改名后就会这样。请点「应用并重启 Codex」重新写入");
+                }
+            }
+
             ModeSummaryText.Text =
-                $"当前：{modeName}　·　模型：{snapshot.Model ?? "(官方默认)"}{warning}";
+                $"当前：{modeName}　·　模型：{snapshot.Model ?? "(官方默认)"}" +
+                (warnings.Count > 0 ? "　⚠ " + string.Join("；", warnings) : string.Empty);
 
             var activeId = await _service.GetActiveProviderIdAsync();
             RefreshProviderList(activeId);
@@ -280,8 +289,63 @@ public partial class ProviderPage : UserControl
         if (ProviderList.SelectedItem is ProviderRow row) row.Refresh();
     }
 
-    private static List<ProviderModel> ParseModels(string text)
+    /// <summary>
+    /// 拉取端点自己声明的模型 ID，直接覆盖下方列表。
+    ///
+    /// <para>模型 ID 的写法由端点定义、各家不同（大小写尤其容易错），手填基本靠猜。
+    /// 让端点报一份清单是最省事也最不容易错的做法。</para>
+    /// </summary>
+    private async void FetchModels_Click(object sender, RoutedEventArgs e)
     {
+        if (Selected is not { } provider) return;
+
+        FetchModelsButton.IsEnabled = false;
+        StatusText.Text = "正在查询端点…";
+        try
+        {
+            // 用户可能刚改过 Base URL 还没保存，所以传入当前输入框的值。
+            var baseUrl = BaseUrlBox.Text.Trim();
+            var key = CurrentKeyInput();
+            if (key.Length == 0)
+            {
+                key = await _service.GetApiKeyAsync(provider.Id) ?? string.Empty;
+            }
+
+            var result = await _service.FetchModelsAsync(baseUrl, key);
+            if (!result.Success)
+            {
+                StatusText.Text = "获取失败：" + result.Error;
+                return;
+            }
+
+            // 保留用户已填的显示名：同名（不区分大小写）就沿用，只把 ID 换成端点的写法。
+            var existing = ParseModels(ModelsBox.Text);
+            var lines = result.Models.Select(slug =>
+            {
+                var match = existing.FirstOrDefault(m =>
+                    string.Equals(m.Slug, slug, StringComparison.OrdinalIgnoreCase));
+                if (match is null || match.DisplayName == $"[第三方] {match.Slug}")
+                {
+                    return $"{slug} | [第三方] {slug}";
+                }
+                return $"{slug} | {match.DisplayName}";
+            });
+
+            ModelsBox.Text = string.Join(Environment.NewLine, lines);
+            StatusText.Text =
+                $"已从端点获取 {result.Models.Count} 个模型。注意大小写——端点只认这些写法。";
+        }
+        catch (Exception exception)
+        {
+            StatusText.Text = "获取失败：" + exception.Message;
+        }
+        finally
+        {
+            FetchModelsButton.IsEnabled = true;
+        }
+    }
+
+    private static List<ProviderModel> ParseModels(string text)    {
         var models = new List<ProviderModel>();
         foreach (var raw in text.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries))
         {
@@ -484,9 +548,12 @@ public partial class ProviderPage : UserControl
                 // 保存后再重启：Codex 是启动时读配置的，不重启不生效。
                 await _service.RestartCodexAsync();
                 CodexRestarted?.Invoke(this, EventArgs.Empty);
-                StatusChanged?.Invoke(this,
+
+                var message =
                     $"已切到第三方模式，Codex 已重启（{result.ModelCount} 个模型，{result.CatalogBytes / 1024} KB）。" +
-                    $"备份：{Path.GetFileName(result.BackupPath)}");
+                    $"备份：{Path.GetFileName(result.BackupPath)}";
+                if (!string.IsNullOrEmpty(result.Note)) message += "\n" + result.Note;
+                StatusChanged?.Invoke(this, message);
                 await LoadAsync();
             }
             else

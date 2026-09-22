@@ -10,6 +10,7 @@ public sealed class CoreProviderManagerService : IProviderManagerService
     private readonly ProviderRegistry _registry;
     private readonly ProviderSecrets _secrets;
     private readonly ModelCatalogBuilder _catalogs;
+    private readonly ProviderModelProbe _probe = new();
     private readonly ClientProcessService _processes = new();
 
     /// <param name="userProfile">用户主目录（决定 <c>~/.codex</c> 位置）；测试可注入临时目录。</param>
@@ -80,6 +81,65 @@ public sealed class CoreProviderManagerService : IProviderManagerService
             throw new InvalidOperationException("该供应商还没有设置 API Key。");
         }
 
+        // 预检：端点认不认这些模型 ID。
+        //
+        // 模型 ID 由端点自定义，大小写规则各家不同（实测小米端点区分大小写：
+        // MiMo-V2.6-Pro 被拒，必须写 mimo-v2.6-pro）。填错时 Codex 要到真正发请求
+        // 才报 "Unsupported model"，完全看不出该改成什么，所以在这里就问清楚。
+        //
+        // 探测失败（端点不支持 /models、网络不通等）不拦——不能因为一个探测接口
+        // 不可用就挡住本来能用的配置。
+        var note = string.Empty;
+        var probe = await _probe.ListModelsAsync(provider.BaseUrl, apiKey, cancellationToken).ConfigureAwait(false);
+        if (probe.Success)
+        {
+            var corrections = new List<string>();
+            var dropped = new List<string>();
+
+            foreach (var model in provider.Models.ToList())
+            {
+                if (probe.Models.Contains(model.Slug, StringComparer.Ordinal)) continue;
+
+                // 只有大小写不同的，按端点的写法修正——这必然是用户的本意。
+                var exact = probe.Models.FirstOrDefault(m =>
+                    string.Equals(m, model.Slug, StringComparison.OrdinalIgnoreCase));
+                if (exact is not null)
+                {
+                    corrections.Add($"{model.Slug} → {exact}");
+                    model.Slug = exact;
+                    continue;
+                }
+
+                // 端点明确不提供：留在列表里只会在 Codex 里点一次错一次，去掉它。
+                // 但绝不静默——下面会把去掉哪些写进提示。
+                dropped.Add(model.Slug);
+                provider.Models.Remove(model);
+            }
+
+            if (provider.Models.Count == 0)
+            {
+                var available = string.Join("\n  ", probe.Models.Take(30));
+                throw new InvalidOperationException(
+                    "端点不支持你配置的任何模型，无法切换。\n\n" +
+                    $"该端点实际可用：\n  {available}\n\n" +
+                    "请点「从端点获取可用模型」一键填入，或手动改成上面的写法（注意大小写）。");
+            }
+
+            var notes = new List<string>();
+            if (corrections.Count > 0) notes.Add("已按端点实际大小写修正：" + string.Join("、", corrections));
+            if (dropped.Count > 0)
+            {
+                notes.Add($"已跳过端点不支持的模型：{string.Join("、", dropped)}" +
+                          "（可在该端点的 /models 列表里确认正确写法后重新添加）");
+            }
+            if (notes.Count > 0)
+            {
+                note = string.Join("　", notes);
+                // 修正与剔除都要落盘，否则下次应用又会拿到同样的错配置。
+                await _registry.SaveAsync(providers, provider.Id, cancellationToken).ConfigureAwait(false);
+            }
+        }
+
         // 先建目录再改配置：目录写入失败时配置还没动，Codex 仍处于可用状态。
         var catalogPath = Path.Combine(CatalogDirectory, $"{provider.SafeTomlKey()}.json");
         var build = await _catalogs.BuildAsync(provider, catalogPath, cancellationToken).ConfigureAwait(false);
@@ -97,7 +157,16 @@ public sealed class CoreProviderManagerService : IProviderManagerService
 
         await _registry.SaveAsync(providers, provider.Id, cancellationToken).ConfigureAwait(false);
 
-        return new ProviderApplyResult(backup, provider.Models.Count, build.Bytes, CodexRoutingMode.ThirdParty);
+        return new ProviderApplyResult(
+            backup, provider.Models.Count, build.Bytes, CodexRoutingMode.ThirdParty,
+            note.Length > 0 ? note : null);
+    }
+
+    public async Task<ProviderModelList> FetchModelsAsync(
+        string baseUrl, string? apiKey, CancellationToken cancellationToken = default)
+    {
+        var result = await _probe.ListModelsAsync(baseUrl, apiKey, cancellationToken).ConfigureAwait(false);
+        return new ProviderModelList(result.Success, result.Models, result.Error);
     }
 
     public async Task<string?> ApplyOfficialAsync(CancellationToken cancellationToken = default)

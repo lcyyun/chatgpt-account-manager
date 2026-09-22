@@ -421,6 +421,62 @@ public sealed class CodexConfigStoreTests
             () => store.ApplyThirdPartyAsync(empty, catalog, null));
     }
 
+    [Fact]
+    public async Task Snapshot_ReportsTokenCommandPathAndValidity()
+    {
+        using var profile = new TemporaryDirectory();
+        await SeedAsync(profile);
+        using var store = new CodexConfigStore(profile.Path);
+
+        await store.ApplyThirdPartyAsync(MakeProvider(), MakeCatalog(profile), null);
+
+        var snapshot = await store.LoadAsync();
+
+        // The command points at the running test host, which exists -> valid.
+        Assert.False(string.IsNullOrWhiteSpace(snapshot.TokenCommandPath));
+        Assert.True(snapshot.TokenCommandExists);
+    }
+
+    [Fact]
+    public async Task Snapshot_FlagsTokenCommandThatNoLongerExists()
+    {
+        using var profile = new TemporaryDirectory();
+        await SeedAsync(profile);
+        using (var store = new CodexConfigStore(profile.Path))
+        {
+            await store.ApplyThirdPartyAsync(MakeProvider(), MakeCatalog(profile), null);
+        }
+
+        // Simulate the app having been moved: rewrite the recorded command to a dead path.
+        var configPath = Path.Combine(profile.Path, ".codex", "config.toml");
+        var text = await File.ReadAllTextAsync(configPath);
+        var patched = System.Text.RegularExpressions.Regex.Replace(
+            text, @"command = '[^']*'", @"command = 'C:\gone\missing\App.exe'");
+        Assert.NotEqual(text, patched);
+        await File.WriteAllTextAsync(configPath, patched);
+
+        using var reopened = new CodexConfigStore(profile.Path);
+        var snapshot = await reopened.LoadAsync();
+
+        // Codex would only report a baffling "failed to resolve external auth" here,
+        // so the snapshot must be able to tell the UI the path is dead.
+        Assert.Equal(@"C:\gone\missing\App.exe", snapshot.TokenCommandPath);
+        Assert.False(snapshot.TokenCommandExists);
+    }
+
+    [Fact]
+    public async Task Snapshot_OfficialModeHasNoTokenCommand()
+    {
+        using var profile = new TemporaryDirectory();
+        await SeedAsync(profile);
+        using var store = new CodexConfigStore(profile.Path);
+
+        var snapshot = await store.LoadAsync();
+
+        Assert.Null(snapshot.TokenCommandPath);
+        Assert.True(snapshot.TokenCommandExists);
+    }
+
     private static int CountOccurrences(string text, string needle)
     {
         var count = 0;

@@ -25,6 +25,21 @@ public sealed record CodexConfigSnapshot
 
     /// <summary>目录指向的文件是否真的存在——不存在时 Codex 会直接启动失败。</summary>
     public bool CatalogFileExists { get; init; }
+
+    /// <summary>
+    /// 管理块里记录的取 token 命令路径。为 null 表示未使用命令式配方。
+    /// </summary>
+    public string? TokenCommandPath { get; init; }
+
+    /// <summary>
+    /// 该命令路径当前是否真的存在。
+    ///
+    /// <para>命令式配方把"本应用自己的 exe 路径"写进了 config.toml。如果之后应用被
+    /// 移动、改名或重新发布到别的目录，路径就失效了——而 Codex 只会不断重试并报
+    /// "wrote non-UTF-8 data"/"failed to resolve external auth" 这类毫无指向性的错，
+    /// 用户根本猜不到是路径问题。所以这里主动检测。</para>
+    /// </summary>
+    public bool TokenCommandExists { get; init; }
 }
 
 /// <summary>
@@ -572,6 +587,11 @@ public sealed class CodexConfigStore : IDisposable
             ? CodexRoutingMode.ThirdParty
             : CodexRoutingMode.Official;
 
+        // 命令式配方：从管理块里取出 command = '...' 以便检测它是否还有效。
+        var tokenCommand = mode == CodexRoutingMode.ThirdParty
+            ? ExtractTokenCommand(lines)
+            : null;
+
         return new CodexConfigSnapshot
         {
             Mode = mode,
@@ -580,7 +600,36 @@ public sealed class CodexConfigStore : IDisposable
             ModelCatalogJson = catalog,
             HasManagedBlock = managed,
             CatalogFileExists = !string.IsNullOrWhiteSpace(catalog) && File.Exists(catalog),
+            TokenCommandPath = tokenCommand,
+            TokenCommandExists = string.IsNullOrWhiteSpace(tokenCommand) || File.Exists(tokenCommand),
         };
+    }
+
+    /// <summary>从管理块的 auth 行里取出 command 的值。</summary>
+    private static string? ExtractTokenCommand(List<string> lines)
+    {
+        foreach (var line in lines)
+        {
+            var index = line.IndexOf("auth = {", StringComparison.Ordinal);
+            if (index < 0) continue;
+            if (!TryMatchKey(line, "auth")) continue;
+
+            var commandIndex = line.IndexOf("command =", index, StringComparison.Ordinal);
+            if (commandIndex < 0) continue;
+
+            var rest = line[(commandIndex + "command =".Length)..].TrimStart();
+            if (rest.Length == 0) continue;
+
+            var quote = rest[0];
+            if (quote is not ('\'' or '"')) continue;
+
+            // 字面量字符串里的 '' 表示一个单引号；本应用的路径不含引号，简单取到下一个同类引号即可。
+            var end = rest.IndexOf(quote, 1);
+            if (end <= 0) continue;
+
+            return rest[1..end];
+        }
+        return null;
     }
 
     private static string ValueOf(string line)
