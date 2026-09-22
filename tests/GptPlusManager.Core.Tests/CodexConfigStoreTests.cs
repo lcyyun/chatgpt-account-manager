@@ -136,7 +136,7 @@ public sealed class CodexConfigStoreTests
     }
 
     [Fact]
-    public async Task ApplyOfficial_RemovesManagedBlockAndTopLevelKeysOnly()
+    public async Task ApplyOfficial_RemovesTopLevelKeysButKeepsProviderTables()
     {
         using var profile = new TemporaryDirectory();
         await SeedAsync(profile);
@@ -147,20 +147,53 @@ public sealed class CodexConfigStoreTests
 
         Assert.NotNull(backup);
         var text = await File.ReadAllTextAsync(store.ConfigPath);
-        Assert.DoesNotContain("model_providers.acme", text);
-        Assert.DoesNotContain("GptPlus Manager managed block", text);
-        Assert.DoesNotContain("--provider-token", text);
+
+        // 顶层路由键必须清掉，否则 Codex 会认为还在第三方模式。
         Assert.DoesNotContain("model_catalog_json = '", text);
+        Assert.DoesNotContain("\nmodel = \"acme-large\"", text);
+        Assert.DoesNotContain("gptplus-head", text);
+        Assert.DoesNotContain("GptPlus Manager managed block", text);
+
+        // provider 表**保留**：每个对话创建时把自己的 provider 记进会话元数据，
+        // 删掉表会让那些对话打不开（"Model provider not found"）。
+        // 这些表在不被引用时是惰性的。
+        Assert.Contains("[model_providers.acme]", text);
+        Assert.Contains("--provider-token", text);
 
         // Top-level model is gone, but the profile's identically-named keys survive.
-        Assert.DoesNotContain("\nmodel = \"acme-large\"", text);
         Assert.Contains("model = \"profile-only-model\"", text);
         Assert.Contains("[profiles.work]", text);
         Assert.Contains("trust_level = \"trusted\"", text);
 
         var snapshot = await store.LoadAsync();
         Assert.Equal(CodexRoutingMode.Official, snapshot.Mode);
-        Assert.False(snapshot.HasManagedBlock);
+    }
+
+    [Fact]
+    public async Task SwitchingProviders_KeepsTheOtherProviderTableSoOldThreadsStillOpen()
+    {
+        using var profile = new TemporaryDirectory();
+        await SeedAsync(profile);
+        var catalog = MakeCatalog(profile);
+        using var store = new CodexConfigStore(profile.Path);
+
+        // 用第一个供应商建对话（这里用写入配置来代表"对话记住了这个 provider"）。
+        var first = MakeProvider();
+        first.Id = "first";
+        await store.ApplyThirdPartyAsync(first, catalog, null);
+
+        // 再切到第二个供应商。
+        var second = MakeProvider();
+        second.Id = "second";
+        await store.ApplyThirdPartyAsync(second, catalog, null);
+
+        var text = await File.ReadAllTextAsync(store.ConfigPath);
+
+        // 这正是用户报的问题：切到新供应商后，用旧供应商建的对话必须仍能打开，
+        // 因此旧 provider 表不能被删掉。
+        Assert.Contains("[model_providers.first]", text);
+        Assert.Contains("[model_providers.second]", text);
+        Assert.Contains("model_provider = \"second\"", text);
     }
 
     [Fact]
@@ -215,7 +248,6 @@ public sealed class CodexConfigStoreTests
 
         var text = await File.ReadAllTextAsync(store.ConfigPath);
         Assert.DoesNotContain("GptPlus Manager managed block", text);
-        Assert.DoesNotContain("--provider-token", text);
         Assert.DoesNotContain("gptplus-head", text);
         Assert.Equal("model = \"gpt-6-astra\"", text.Split('\n')[1].TrimEnd());
     }
@@ -225,7 +257,7 @@ public sealed class CodexConfigStoreTests
     {
         using var profile = new TemporaryDirectory();
         var path = await SeedAsync(profile);
-        var original = await File.ReadAllBytesAsync(path);
+        var original = await File.ReadAllTextAsync(path);
         var catalog = MakeCatalog(profile);
         using var store = new CodexConfigStore(profile.Path);
 
@@ -235,7 +267,10 @@ public sealed class CodexConfigStoreTests
         }
         await store.ApplyOfficialAsync();
 
-        Assert.Equal(original, await File.ReadAllBytesAsync(store.ConfigPath));
+        // 用户的内容必须逐字恢复；我方留下的 provider 表是有意保留的（见下方测试），
+        // 所以不再要求整文件字节相同，改为比对"用户内容"。
+        var after = await File.ReadAllTextAsync(store.ConfigPath);
+        Assert.Equal(UserContentOf(original), UserContentOf(after));
     }
 
     [Fact]
@@ -301,19 +336,22 @@ public sealed class CodexConfigStoreTests
     }
 
     [Fact]
-    public async Task SwitchBackAndForth_RoundTripsToOriginalBytes()
+    public async Task SwitchBackAndForth_RestoresUserContentExactly()
     {
         using var profile = new TemporaryDirectory();
         var path = await SeedAsync(profile);
-        var original = await File.ReadAllBytesAsync(path);
+        var original = await File.ReadAllTextAsync(path);
         using var store = new CodexConfigStore(profile.Path);
 
         await store.ApplyThirdPartyAsync(MakeProvider(), MakeCatalog(profile), null);
         await store.ApplyOfficialAsync();
 
-        // Official mode must reproduce the user's file exactly — this is what makes
-        // switching back risk-free.
-        Assert.Equal(original, await File.ReadAllBytesAsync(store.ConfigPath));
+        // 切回官方必须逐字恢复用户的内容。我方留下的 provider 表是有意为之：
+        // 删掉它们会让用该供应商建的对话打不开，所以不要求整文件字节相同。
+        var after = await File.ReadAllTextAsync(store.ConfigPath);
+        Assert.Equal(UserContentOf(original), UserContentOf(after));
+        Assert.Contains("[profiles.work]", after);
+        Assert.Contains("model = \"profile-only-model\"", after);
     }
 
     [Fact]
@@ -699,10 +737,8 @@ public sealed class CodexConfigStoreTests
         Assert.Contains("startup_timeout_sec = 120", after);
         Assert.Contains("trust_level = \"trusted\"", after);
         Assert.Contains("model = \"profile-only-model\"", after);
-        // 我们自己的痕迹必须清干净。
-        Assert.DoesNotContain("model_providers.acme", after);
+        // 我们写的注释标记必须清干净（provider 表按设计保留，见下方专项测试）。
         Assert.DoesNotContain("gptplus-", after);
-        Assert.DoesNotContain("--provider-token", after);
     }
 
     [Fact]
@@ -728,7 +764,6 @@ public sealed class CodexConfigStoreTests
         Assert.Contains("[desktop]", after);
         Assert.Contains("localeOverride = \"zh-CN\"", after);
         Assert.Contains("[windows]", after);
-        Assert.DoesNotContain("model_providers.acme", after);
     }
 
     [Fact]
@@ -752,8 +787,13 @@ public sealed class CodexConfigStoreTests
         await store.ApplyOfficialAsync();
 
         var after = await File.ReadAllTextAsync(file);
+
+        // 用户自己的 provider 必须原样保留——我们无权动它。
         Assert.Contains("[model_providers.my-own]", after);
         Assert.Contains("base_url = 'https://mine/v1'", after);
-        Assert.DoesNotContain("model_providers.acme", after);
+
+        // 我方写的那张表也保留（旧对话可能引用它），但顶层已回到用户自己的设置。
+        Assert.Contains("model = \"mine\"", after);
+        Assert.Contains("model_provider = \"my-own\"", after);
     }
 }

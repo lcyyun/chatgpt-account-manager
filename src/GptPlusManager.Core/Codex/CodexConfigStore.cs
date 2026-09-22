@@ -318,8 +318,14 @@ public sealed class CodexConfigStore : IDisposable
         // 于是切回官方时"还原"成一个第三方配置，用户的设置就永久丢了。
         var recordedHead = FindRecordedHeadPayload(lines)
             ?? RecordCurrentHead(lines);
-        // 清掉上一次管理的块与键，避免反复切换时叠加。
-        lines = RemoveManaged(lines);
+
+        // 只替换本供应商的表，并把旧的顶层区域记录去掉（下面会写回同一份）。
+        //
+        // 关键：**不要**清掉其他供应商的 provider 表。每个对话创建时都把自己的
+        // model_provider 记进会话元数据；把旧表删掉，那些对话再打开就会
+        // "Model provider not found"，实测桌面版正是如此。
+        lines = RemoveMarkerLines(lines);
+        lines = RemoveProviderTableFor(lines, provider.SafeTomlKey());
 
         // 顶层三处必须一起改，缺任何一个 Codex 都会报错。
         lines = SetTopLevelKey(lines, "model", TomlString(provider.Models[0].Slug));
@@ -328,9 +334,9 @@ public sealed class CodexConfigStore : IDisposable
 
         // 追加 provider 定义。
         //
-        // 不再使用"起止标记圈定范围"的写法：桌面版重写 config.toml 时会把悬空注释
+        // 不使用"起止标记圈定范围"的写法：桌面版重写 config.toml 时会把悬空注释
         // 排到文件末尾，结束标记一旦被挪到最后一行，用户整个配置都会落进"待删范围"。
-        // 现在只用单行注释标记，删除时按结构识别（见 RemoveManaged）。
+        // 只用单行注释标记，识别时按结构判定。
         //
         // 插到首个已存在的 [table] 之前：三个顶层键属于文件头部，而 provider 表
         // 必须排在顶层键之后。
@@ -383,7 +389,14 @@ public sealed class CodexConfigStore : IDisposable
         var recordedHead = hasHeadRecord
             ? DecodeHead(FindRecordedHeadPayload(lines)!)
             : null;
-        var body = RemoveManaged(lines);
+
+        // 只去掉自己写的注释标记；**保留所有 provider 表**。
+        //
+        // 这些表必须留着：每个对话创建时把自己的 model_provider 记进会话元数据，
+        // 删掉表就等于让那些对话"找不到自己的供应商"，打开时报
+        // "Model provider not found"（实测桌面版如此）。表的保留没有副作用——
+        // 它们只在被引用时才生效，而切回官方后顶层 model_provider 已不存在。
+        var body = RemoveMarkerLines(lines);
 
         if (recordedHead is not null)
         {
@@ -497,6 +510,11 @@ public sealed class CodexConfigStore : IDisposable
     /// <para>所以这里只做两件安全的事：删掉<b>自己写的那几行注释</b>（单行，删错也只损失一行），
     /// 以及删掉<b>识别出属于自己的 provider 表</b>（按表名 + 内容特征判定）。</para>
     /// </summary>
+    /// <summary>
+    /// 移除本应用写的<b>全部</b>内容：标记注释与所有自己的 provider 表。
+    /// 只用于清洗记坏了的顶层记录，不参与常规切换——常规切换请用
+    /// <see cref="RemoveProviderTableFor"/>。
+    /// </summary>
     private static List<string> RemoveManaged(List<string> lines)
     {
         var result = new List<string>(lines.Count);
@@ -520,6 +538,71 @@ public sealed class CodexConfigStore : IDisposable
                 IsManagedProviderTable(lines, index, tableName))
             {
                 index = SkipTable(lines, index);
+                continue;
+            }
+
+            result.Add(lines[index]);
+            index++;
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// 只移除<b>我们自己写的注释标记</b>（顶层记录、旧版成对标记），
+    /// 保留所有 provider 表与它们的标记。
+    /// </summary>
+    private static List<string> RemoveMarkerLines(List<string> lines)
+    {
+        var result = new List<string>(lines.Count);
+        foreach (var line in lines)
+        {
+            var trimmed = line.Trim();
+            if (trimmed == LegacyBeginMarker || trimmed == LegacyEndMarker ||
+                trimmed.StartsWith(HeadMarker, StringComparison.Ordinal))
+            {
+                continue;
+            }
+            result.Add(line);
+        }
+        return result;
+    }
+
+    /// <summary>
+    /// 只移除指定供应商的那张 <c>[model_providers.*]</c> 表（连同上方的标记注释
+    /// 与一张表后的空行），<b>其他供应商的表原样保留</b>。
+    ///
+    /// <para><b>为什么必须保留其他 provider 表：</b>每个对话在创建时都把自己的
+    /// <c>model_provider</c> 写进会话元数据。切换供应商若把旧表删掉，那些对话就再也
+    /// 解析不到自己的 provider，打开时直接报 "Model provider not found"——
+    /// 实测桌面版正是如此。保留这些表没有副作用：它们只在被引用时才生效，
+    /// 而新对话走的是顶层 <c>model_provider</c>。</para>
+    /// </summary>
+    private static List<string> RemoveProviderTableFor(List<string> lines, string providerId)
+    {
+        var target = $"model_providers.{providerId}";
+        var result = new List<string>(lines.Count);
+        var index = 0;
+
+        while (index < lines.Count)
+        {
+            var trimmed = lines[index].Trim();
+
+            if (TryParseTableHeader(trimmed, out var tableName) &&
+                string.Equals(tableName, target, StringComparison.OrdinalIgnoreCase) &&
+                IsManagedProviderTable(lines, index, tableName))
+            {
+                // 连同上方的标记注释一起去掉（随后会重新写）。
+                if (result.Count > 0 &&
+                    result[^1].Trim().StartsWith(ProviderMarker, StringComparison.Ordinal))
+                {
+                    result.RemoveAt(result.Count - 1);
+                }
+
+                index = SkipTable(lines, index);
+
+                // 再吃掉紧随其后的一个空行，避免反复切换把空行越积越多。
+                if (index < lines.Count && lines[index].Trim().Length == 0) index++;
                 continue;
             }
 
