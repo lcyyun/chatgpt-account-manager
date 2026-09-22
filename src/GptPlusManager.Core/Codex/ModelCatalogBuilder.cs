@@ -26,8 +26,8 @@ public sealed class ModelCatalogBuilder
     ///
     /// <para><b>这份清单要尽量短。</b>剥离等于替第三方声明"不支持"，猜错就废掉一个
     /// 本来能用的能力——实测 <c>use_responses_lite</c> 就因为被误判成官方品牌字段而
-    /// 剔除，导致小米端点直接拒服务（<c>custom tools require MiMo freeform
-    /// Responses lite mode</c>）。所以只剥<b>确凿</b>属于官方服务或营销的东西。</para>
+    /// 剔除，导致有的端点直接拒服务（报 "custom tools require ... Responses lite
+    /// mode"），所以只剥<b>确凿</b>属于官方服务或营销的东西。</para>
     ///
     /// <para>协议选择器类字段（<c>use_responses_lite</c>）、上下文窗口比例、
     /// 实验性开关一律保留，它们描述的是"怎么说话"，不是"谁的服务"。</para>
@@ -70,10 +70,11 @@ public sealed class ModelCatalogBuilder
         var template = await LoadTemplateAsync(cancellationToken).ConfigureAwait(false);
         var models = new JsonArray();
 
-        for (var i = 0; i < provider.Models.Count; i++)
+        // 只用启用的模型：关掉的留在配置里，但不暴露给 Codex。
+        var enabled = provider.EnabledModels;
+        for (var i = 0; i < enabled.Count; i++)
         {
-            var model = provider.Models[i];
-            var entry = CloneForModel(template, provider, model, i + 1);
+            var entry = CloneForModel(template, provider, enabled[i], i + 1);
             models.Add(entry);
         }
 
@@ -93,7 +94,7 @@ public sealed class ModelCatalogBuilder
 
         return new CatalogBuildResult(
             outputPath,
-            [.. provider.Models.Select(m => m.Slug)],
+            [.. enabled.Select(m => m.Slug)],
             new FileInfo(outputPath).Length);
     }
 
@@ -116,8 +117,8 @@ public sealed class ModelCatalogBuilder
         entry["visibility"] = "list";
         entry["supported_in_api"] = true;
 
-        // 上下文窗口由用户按供应商实际能力设定；缺省取保守值而非继承官方的 272k。
-        var window = provider.ContextWindow > 0 ? provider.ContextWindow.Value : DefaultContextWindow;
+        // 上下文窗口按模型取值（供应商级默认已在 Normalize 时同步下来）。
+        var window = model.ContextWindow > 0 ? model.ContextWindow!.Value : DefaultContextWindow;
         entry["context_window"] = window;
         entry["max_context_window"] = window;
 
@@ -125,7 +126,7 @@ public sealed class ModelCatalogBuilder
         entry.Remove("supports_search_tool");
         entry["supports_search_tool"] = false;
 
-        if (provider.SupportsImages)
+        if (model.SupportsImages)
         {
             entry["input_modalities"] = new JsonArray("text", "image");
             entry["supports_image_detail_original"] = true;
@@ -196,4 +197,26 @@ public sealed class ModelCatalogBuilder
 
     private static bool HasUsableMessages(JsonObject node) =>
         node["model_messages"] is JsonObject messages && messages.Count > 0;
+
+    /// <summary>
+    /// 生成的目录条目是否会带上 <c>use_responses_lite</c>。
+    ///
+    /// <para>这个值来自官方模板（即用户本机的 <c>models_cache.json</c>），Codex 会把它
+    /// 翻译成请求头 <c>x-openai-internal-codex-responses-lite</c> 发给端点。
+    /// 自检需要与真实请求保持一致，所以从同一个来源读，而不是另设一个开关。</para>
+    ///
+    /// <para>模板不可用时返回 false——自检因此不会带这个头，最坏情况是漏报而非误报。</para>
+    /// </summary>
+    public async Task<bool> TemplateUsesResponsesLiteAsync(CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            var template = await LoadTemplateAsync(cancellationToken).ConfigureAwait(false);
+            return template["use_responses_lite"]?.GetValue<bool>() ?? false;
+        }
+        catch (Exception exception) when (exception is IOException or JsonException or InvalidOperationException)
+        {
+            return false;
+        }
+    }
 }

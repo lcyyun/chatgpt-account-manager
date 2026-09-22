@@ -433,7 +433,7 @@ public sealed class CodexConfigStoreTests
         var snapshot = await store.LoadAsync();
 
         // The command points at the running test host, which exists -> valid.
-        Assert.False(string.IsNullOrWhiteSpace(snapshot.TokenCommandPath));
+        Assert.False(string.IsNullOrWhiteSpace(snapshot.StoredTokenCommandPath));
         Assert.True(snapshot.TokenCommandExists);
     }
 
@@ -460,7 +460,7 @@ public sealed class CodexConfigStoreTests
 
         // Codex would only report a baffling "failed to resolve external auth" here,
         // so the snapshot must be able to tell the UI the path is dead.
-        Assert.Equal(@"C:\gone\missing\App.exe", snapshot.TokenCommandPath);
+        Assert.Equal(@"C:\gone\missing\App.exe", snapshot.StoredTokenCommandPath);
         Assert.False(snapshot.TokenCommandExists);
     }
 
@@ -473,8 +473,82 @@ public sealed class CodexConfigStoreTests
 
         var snapshot = await store.LoadAsync();
 
-        Assert.Null(snapshot.TokenCommandPath);
+        Assert.Null(snapshot.StoredTokenCommandPath);
         Assert.True(snapshot.TokenCommandExists);
+    }
+
+    [Fact]
+    public async Task Snapshot_DetectsTokenCommandNotPointingAtCurrentApp()
+    {
+        using var profile = new TemporaryDirectory();
+        await SeedAsync(profile);
+        using var store = new CodexConfigStore(profile.Path);
+        await store.ApplyThirdPartyAsync(MakeProvider(), MakeCatalog(profile), null);
+
+        var configPath = Path.Combine(profile.Path, ".codex", "config.toml");
+        var text = await File.ReadAllTextAsync(configPath);
+        await File.WriteAllTextAsync(configPath, System.Text.RegularExpressions.Regex.Replace(
+            text, @"command = '[^']*'", @"command = 'C:\somewhere\else\Old.exe'"));
+
+        using var reopened = new CodexConfigStore(profile.Path);
+        var snapshot = await reopened.LoadAsync();
+
+        // This is what tells the UI "the app moved; re-apply to fix it".
+        Assert.False(snapshot.TokenCommandMatchesCurrentApp);
+    }
+
+    [Fact]
+    public async Task RepairTokenCommandPath_RewritesStalePathToCurrentApp()
+    {
+        using var profile = new TemporaryDirectory();
+        await SeedAsync(profile);
+        var catalog = MakeCatalog(profile);
+        using var store = new CodexConfigStore(profile.Path);
+        await store.ApplyThirdPartyAsync(MakeProvider(), catalog, null);
+
+        var configPath = Path.Combine(profile.Path, ".codex", "config.toml");
+        var text = await File.ReadAllTextAsync(configPath);
+        await File.WriteAllTextAsync(configPath, System.Text.RegularExpressions.Regex.Replace(
+            text, @"command = '[^']*'", @"command = 'C:\somewhere\else\Old.exe'"));
+
+        var backup = await store.RepairTokenCommandPathAsync();
+
+        Assert.NotNull(backup);
+        var snapshot = await store.LoadAsync();
+        Assert.True(snapshot.TokenCommandMatchesCurrentApp);
+        Assert.NotEqual(@"C:\somewhere\else\Old.exe", snapshot.StoredTokenCommandPath);
+
+        // Repair must not disturb anything else in the file.
+        var repaired = await File.ReadAllTextAsync(configPath);
+        Assert.Contains("[model_providers.acme]", repaired);
+        Assert.Contains("[profiles.work]", repaired);
+        Assert.Contains("model = \"acme-large\"", repaired);
+    }
+
+    [Fact]
+    public async Task RepairTokenCommandPath_NoOpWhenAlreadyCorrect()
+    {
+        using var profile = new TemporaryDirectory();
+        await SeedAsync(profile);
+        using var store = new CodexConfigStore(profile.Path);
+        await store.ApplyThirdPartyAsync(MakeProvider(), MakeCatalog(profile), null);
+
+        var backup = await store.RepairTokenCommandPathAsync();
+
+        // Nothing to fix -> no write, no backup.
+        Assert.Null(backup);
+    }
+
+    [Fact]
+    public async Task RepairTokenCommandPath_NoOpInOfficialMode()
+    {
+        using var profile = new TemporaryDirectory();
+        await SeedAsync(profile);
+        using var store = new CodexConfigStore(profile.Path);
+
+        var backup = await store.RepairTokenCommandPathAsync();
+
+        Assert.Null(backup);
     }
 
     private static int CountOccurrences(string text, string needle)

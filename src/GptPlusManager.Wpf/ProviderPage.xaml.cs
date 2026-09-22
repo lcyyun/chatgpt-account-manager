@@ -26,6 +26,9 @@ public partial class ProviderPage : UserControl
     private bool _syncing;
     private bool _keyRevealed;
 
+    /// <summary>本次载入时是否自动修复了取 token 命令路径（用于提示用户）。</summary>
+    private bool _selfHealed;
+
     public ProviderPage(IProviderManagerService service)
     {
         InitializeComponent();
@@ -59,7 +62,22 @@ public partial class ProviderPage : UserControl
         {
             _providers.Clear();
             _providers.AddRange(await _service.LoadProvidersAsync());
+
+            // 自愈：程序被移动或改名后，配置里记录的取 token 命令就会指向不存在的位置，
+            // Codex 只会报"取不到密钥"这类无指向性的错。这里静默修回当前路径，
+            // 用户不需要理解发生了什么。
+            string? selfHealed = null;
+            try
+            {
+                selfHealed = await _service.RepairTokenCommandPathAsync();
+            }
+            catch (Exception)
+            {
+                // 修复失败不影响页面加载；下面的警告会提示用户手动重新应用。
+            }
+
             var snapshot = await _service.GetStatusAsync();
+            _selfHealed = selfHealed is not null;
 
             OfficialRadio.IsChecked = snapshot.Mode == CodexRoutingMode.Official;
             ThirdPartyRadio.IsChecked = snapshot.Mode == CodexRoutingMode.ThirdParty;
@@ -69,7 +87,7 @@ public partial class ProviderPage : UserControl
             if (snapshot.Mode == CodexRoutingMode.ThirdParty)
             {
                 if (!snapshot.CatalogFileExists) warnings.Add("目录文件缺失，Codex 将无法启动");
-                if (!snapshot.TokenCommandExists)
+                if (!snapshot.TokenCommandMatchesCurrentApp)
                 {
                     warnings.Add("取密钥的命令路径已失效——Codex 会一直取不到 token。" +
                                  "路径指向的是本程序，移动或改名后就会这样。请点「应用并重启 Codex」重新写入");
@@ -79,6 +97,13 @@ public partial class ProviderPage : UserControl
             ModeSummaryText.Text =
                 $"当前：{modeName}　·　模型：{snapshot.Model ?? "(官方默认)"}" +
                 (warnings.Count > 0 ? "　⚠ " + string.Join("；", warnings) : string.Empty);
+
+            if (_selfHealed)
+            {
+                // 自动修好了，但仍要告诉用户发生过什么，否则他会困惑于"为什么刚才不能用"。
+                StatusText.Text = "检测到本程序位置已变化，已自动修正取密钥的命令路径。" +
+                                  "重启 Codex 后生效。";
+            }
 
             var activeId = await _service.GetActiveProviderIdAsync();
             RefreshProviderList(activeId);
@@ -140,13 +165,113 @@ public partial class ProviderPage : UserControl
         /// 就地刷新标题，而不是重建整个列表。
         ///
         /// <para>重建会重置选中项并再次触发 SelectionChanged，而那个处理器会把供应商字段
-        /// 写回输入框——用户在模型框里每敲一个字都会被打断。通知式刷新没有这个回路。</para>
+        /// 写回输入框——用户在详情里每敲一个字都会被打断。通知式刷新没有这个回路。</para>
         /// </summary>
         public void Refresh()
         {
             PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(nameof(Title)));
             PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(nameof(Subtitle)));
         }
+    }
+
+    /// <summary>
+    /// 模型行的显示包装。
+    ///
+    /// <para>直接绑 <see cref="ProviderModel"/> 也行，但徽章要算字符串、开关要双向回写，
+    /// 包一层能让 XAML 保持声明式，也避免把界面逻辑塞进 Core 模型。</para>
+    /// </summary>
+    private sealed class ModelRow : System.ComponentModel.INotifyPropertyChanged
+    {
+        private readonly ProviderPage _owner;
+
+        public ModelRow(ProviderModel model, ProviderPage owner)
+        {
+            Model = model;
+            _owner = owner;
+        }
+
+        public event System.ComponentModel.PropertyChangedEventHandler? PropertyChanged;
+
+        public ProviderModel Model { get; }
+        public string Slug => Model.Slug;
+
+        /// <summary>
+        /// 上下文窗口徽章。显示的是<b>实际生效值</b>——模型没设时用默认值，
+        /// 而不是什么都不显示，否则用户看不出这个模型到底按多少算。
+        /// </summary>
+        public bool HasWindow => true;
+
+        public string WindowBadge => FormatWindow(EffectiveWindow);
+
+        /// <summary>模型自己设的值；未设时为 null。</summary>
+        public int? OwnWindow => Model.ContextWindow;
+
+        private int EffectiveWindow => Model.ContextWindow is > 0
+            ? Model.ContextWindow!.Value
+            : ModelCatalogBuilder.DefaultContextWindow;
+
+        private static string FormatWindow(int tokens) => tokens switch
+        {
+            >= 1_000_000 when tokens % 1_000_000 == 0 => $"{tokens / 1_000_000}M",
+            >= 1_000_000 => $"{tokens / 1_000_000.0:0.#}M",
+            >= 1000 => $"{tokens / 1000}K",
+            _ => tokens.ToString(),
+        };
+
+        public bool HasFlags => Model.SupportsImages;
+        public string FlagBadge => "vision";
+
+        /// <summary>开关双向回写：关掉的模型不参与目录生成。</summary>
+        public bool Enabled
+        {
+            get => Model.Enabled;
+            set
+            {
+                if (Model.Enabled == value) return;
+                Model.Enabled = value;
+                _owner.OnModelToggled();
+                PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(nameof(Enabled)));
+            }
+        }
+
+        public void Refresh()
+        {
+            PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(nameof(Slug)));
+            PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(nameof(HasWindow)));
+            PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(nameof(WindowBadge)));
+            PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(nameof(HasFlags)));
+            PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(nameof(FlagBadge)));
+        }
+    }
+
+    /// <summary>模型行增删改后同步到供应商对象并刷新界面。</summary>
+    private void OnModelToggled()
+    {
+        SyncModelsFromRows();
+        UpdateModelEmptyHint();
+    }
+
+    private void SyncModelsFromRows()
+    {
+        if (Selected is not { } provider) return;
+        provider.Models = [.. ModelList.ItemsSource.Cast<ModelRow>().Select(r => r.Model)];
+    }
+
+    private void UpdateModelEmptyHint()
+    {
+        var empty = ModelList.ItemsSource is null || !ModelList.ItemsSource.Cast<ModelRow>().Any();
+        ModelEmptyHint.Visibility = empty ? Visibility.Visible : Visibility.Collapsed;
+        if (empty && Selected is { } provider && provider.Models.Count > 0)
+        {
+            // 行列表还没渲染完，以数据为准。
+            ModelEmptyHint.Visibility = Visibility.Collapsed;
+        }
+    }
+
+    private void RenderModels(ProviderDefinition provider)
+    {
+        ModelList.ItemsSource = provider.Models.Select(m => new ModelRow(m, this)).ToList();
+        UpdateModelEmptyHint();
     }
 
     private void ShowDetail(bool visible)
@@ -164,9 +289,8 @@ public partial class ProviderPage : UserControl
         ApiKeyPlainBox.IsEnabled = visible;
         CommandAuthRadio.IsEnabled = visible;
         PlainTokenAuthRadio.IsEnabled = visible;
-        ContextWindowBox.IsEnabled = visible;
-        SupportsImagesCheck.IsEnabled = visible;
-        ModelsBox.IsEnabled = visible;
+        AddModelButton.IsEnabled = visible;
+        FetchModelsButton.IsEnabled = visible;
     }
 
     private void ClearDetail()
@@ -177,9 +301,8 @@ public partial class ProviderPage : UserControl
         ApiKeyBox.Clear();
         ApiKeyPlainBox.Text = string.Empty;
         KeyStatusText.Text = string.Empty;
-        ContextWindowBox.Text = string.Empty;
-        SupportsImagesCheck.IsChecked = false;
-        ModelsBox.Text = string.Empty;
+        ModelList.ItemsSource = null;
+        ModelEmptyHint.Visibility = Visibility.Collapsed;
         StatusText.Text = string.Empty;
         CommandAuthRadio.IsChecked = true;
     }
@@ -190,7 +313,9 @@ public partial class ProviderPage : UserControl
 
     private async void ProviderList_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        if (_loading) return;
+        // 这里刻意不检查 _loading：LoadAsync 期间也要把详情填上，否则会出现
+        // "左侧高亮已选中、右侧一片空白"的状态。防止"程序化写入被当成用户编辑"
+        // 是 _syncing 的职责，由下面真正写字段时开启。
         var provider = Selected;
         if (provider is null) return;
 
@@ -203,12 +328,9 @@ public partial class ProviderPage : UserControl
             ProviderIdBox.Text = provider.Id;
             DisplayNameBox.Text = provider.DisplayName;
             BaseUrlBox.Text = provider.BaseUrl;
-            ContextWindowBox.Text = provider.ContextWindow?.ToString() ?? string.Empty;
-            SupportsImagesCheck.IsChecked = provider.SupportsImages;
             CommandAuthRadio.IsChecked = provider.AuthMode == ProviderAuthMode.Command;
             PlainTokenAuthRadio.IsChecked = provider.AuthMode == ProviderAuthMode.PlainToken;
-            ModelsBox.Text = string.Join(Environment.NewLine,
-                provider.Models.Select(m => m.Slug == m.DisplayName ? m.Slug : $"{m.Slug} | {m.DisplayName}"));
+            RenderModels(provider);
 
             // 永远不把已保存的密钥填回输入框：读不出来时就显示"已保存"，
             // 让用户知道留空 = 不改动。
@@ -279,11 +401,7 @@ public partial class ProviderPage : UserControl
         provider.Id = ProviderIdBox.Text.Trim();
         provider.DisplayName = DisplayNameBox.Text.Trim();
         provider.BaseUrl = BaseUrlBox.Text.Trim();
-        provider.ContextWindow = int.TryParse(ContextWindowBox.Text.Trim(), out var window) && window > 0
-            ? window
-            : null;
-        provider.Models = ParseModels(ModelsBox.Text);
-        provider.SupportsImages = SupportsImagesCheck.IsChecked == true;
+        SyncModelsFromRows();
 
         // 就地刷新左侧标题——重建列表会把用户的输入顶掉（见 ProviderRow.Refresh 注释）。
         if (ProviderList.SelectedItem is ProviderRow row) row.Refresh();
@@ -318,20 +436,37 @@ public partial class ProviderPage : UserControl
                 return;
             }
 
-            // 保留用户已填的显示名：同名（不区分大小写）就沿用，只把 ID 换成端点的写法。
-            var existing = ParseModels(ModelsBox.Text);
-            var lines = result.Models.Select(slug =>
+            // 保留用户已填的显示名与逐模型设置：同名（不区分大小写）就沿用，
+            // 只把 ID 换成端点的写法；端点新增的模型则补进来。
+            var existing = provider.Models.ToList();
+            var merged = new List<ProviderModel>();
+
+            foreach (var slug in result.Models)
             {
                 var match = existing.FirstOrDefault(m =>
                     string.Equals(m.Slug, slug, StringComparison.OrdinalIgnoreCase));
-                if (match is null || match.DisplayName == $"[第三方] {match.Slug}")
-                {
-                    return $"{slug} | [第三方] {slug}";
-                }
-                return $"{slug} | {match.DisplayName}";
-            });
 
-            ModelsBox.Text = string.Join(Environment.NewLine, lines);
+                if (match is null)
+                {
+                    merged.Add(new ProviderModel
+                    {
+                        Slug = slug,
+                        DisplayName = $"[第三方] {slug}",
+                        ContextWindow = null,
+                        SupportsImages = provider.SupportsImages,
+                        Enabled = true,
+                    });
+                }
+                else
+                {
+                    match.Slug = slug;
+                    if (string.IsNullOrWhiteSpace(match.DisplayName)) match.DisplayName = $"[第三方] {slug}";
+                    merged.Add(match);
+                }
+            }
+
+            provider.Models = merged;
+            RenderModels(provider);
             StatusText.Text =
                 $"已从端点获取 {result.Models.Count} 个模型。注意大小写——端点只认这些写法。";
         }
@@ -345,25 +480,104 @@ public partial class ProviderPage : UserControl
         }
     }
 
-    private static List<ProviderModel> ParseModels(string text)    {
-        var models = new List<ProviderModel>();
-        foreach (var raw in text.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries))
+    // ---------- 模型行操作 ----------
+
+    private void AddModel_Click(object sender, RoutedEventArgs e)
+    {
+        if (Selected is not { } provider) return;
+
+        var model = new ProviderModel
         {
-            var line = raw.Trim();
-            if (line.Length == 0 || line.StartsWith('#')) continue;
+            ContextWindow = null,
+            SupportsImages = provider.SupportsImages,
+            Enabled = true,
+        };
 
-            var parts = line.Split('|', 2);
-            var slug = parts[0].Trim();
-            if (slug.Length == 0) continue;
+        var edited = ModelEditorWindow.ShowDialog(Window.GetWindow(this), model, isNew: true);
+        if (edited is null || edited.Slug.Length == 0) return;
 
-            var display = parts.Length > 1 ? parts[1].Trim() : string.Empty;
-            models.Add(new ProviderModel
-            {
-                Slug = slug,
-                DisplayName = display.Length > 0 ? display : $"[第三方] {slug}",
-            });
+        provider.Models.Add(edited);
+        RenderModels(provider);
+        StatusText.Text = $"已添加模型 {edited.Slug}。记得点上方「保存供应商」。";
+    }
+
+    private void EditModel_Click(object sender, RoutedEventArgs e)
+    {
+        if (Selected is not { } provider) return;
+        if ((sender as FrameworkElement)?.Tag is not ModelRow row) return;
+
+        var edited = ModelEditorWindow.ShowDialog(Window.GetWindow(this), row.Model, isNew: false);
+        if (edited is null || edited.Slug.Length == 0) return;
+
+        row.Model.Slug = edited.Slug;
+        row.Model.DisplayName = edited.DisplayName;
+        row.Model.ContextWindow = edited.ContextWindow;
+        row.Model.SupportsImages = edited.SupportsImages;
+        row.Refresh();
+        SyncModelsFromRows();
+        StatusText.Text = "模型已修改。记得点上方「保存供应商」。";
+    }
+
+    private void RemoveModel_Click(object sender, RoutedEventArgs e)
+    {
+        if (Selected is not { } provider) return;
+        if ((sender as FrameworkElement)?.Tag is not ModelRow row) return;
+
+        provider.Models.Remove(row.Model);
+        RenderModels(provider);
+        StatusText.Text = $"已移除模型 {row.Slug}。记得点上方「保存供应商」。";
+    }
+
+    /// <summary>
+    /// 测试<b>单个模型</b>能否正常使用：连通性 → 模型名 → 带工具的请求。
+    ///
+    /// <para>按模型测而不是按供应商测，因为同一个端点下不同模型的行为可能不同
+    /// （有的支持工具、有的不支持，模型名大小写也可能各有要求）。
+    /// 只有逐模型验证过，才知道到底是哪个模型有问题。</para>
+    ///
+    /// <para>第三步是关键：Codex 每次请求都带工具，而不少协议差异只在带工具时才暴露
+    /// （就是之前那个 unsupported_feature 的形态）。</para>
+    /// </summary>
+    private async void TestModel_Click(object sender, RoutedEventArgs e)
+    {
+        if (Selected is not { } provider) return;
+        if ((sender as FrameworkElement)?.Tag is not ModelRow row) return;
+
+        var slug = row.Model.Slug;
+        if (string.IsNullOrWhiteSpace(slug))
+        {
+            StatusText.Text = "这个模型还没有 ID，无法测试。";
+            return;
         }
-        return models;
+
+        if (sender is Button button) button.IsEnabled = false;
+        StatusText.Text = $"正在测试 {slug}…";
+        try
+        {
+            var baseUrl = BaseUrlBox.Text.Trim();
+            var key = CurrentKeyInput();
+            if (key.Length == 0) key = await _service.GetApiKeyAsync(provider.Id) ?? string.Empty;
+
+            if (key.Length == 0)
+            {
+                StatusText.Text = "请先填写 API Key 再测试。";
+                return;
+            }
+
+            var report = await _service.TestConnectionAsync(baseUrl, key, slug, usesResponsesLite: false);
+            StatusText.Text = report.Success
+                ? $"{slug} 自检通过。"
+                : $"{slug} 自检未通过，详见弹窗。";
+            ConnectionTestWindow.Show(Window.GetWindow(this), slug, report);
+        }
+        catch (Exception exception)
+        {
+            StatusText.Text = "测试失败：" + exception.Message;
+        }
+        finally
+        {
+            if (sender is Button b) b.IsEnabled = true;
+        }
     }
 
     private void AuthMode_Checked(object sender, RoutedEventArgs e)
@@ -374,36 +588,67 @@ public partial class ProviderPage : UserControl
             : ProviderAuthMode.Command;
     }
 
+    /// <summary>
+    /// 切换密钥的显示 / 隐藏。
+    ///
+    /// <para>两个输入框始终保存着同一份文本：隐藏时 <see cref="PasswordBox"/> 显示圆点，
+    /// 显示时 <see cref="ApiKeyPlainBox"/> 显示明文。任一时刻只有一个是可见的，
+    /// 但两个都要保持同步，否则来回切换会丢内容。</para>
+    ///
+    /// <para><b>同步期间必须抑制回写</b>（<see cref="_syncingKey"/>）：两个控件互为镜像，
+    /// 一个的 Changed 事件会去改另一个，而那个又会反过来触发事件——不同步好的话，
+    /// 第二次切换就会把文本清空。</para>
+    /// </summary>
+    private bool _syncingKey;
+
     private void SetKeyRevealed(bool revealed)
     {
+        // 取值方向不能按"目标状态"来定，必须看**切换前**谁可见：
+        // 那时可见的那个才持有用户输入。（这个规则由 RevealToggle 承载并被测试固定，
+        // 因为搞反过一次，结果明文框拿到旧值后与掩码框的内容拼接，密钥变成两份重复。）
+        var value = RevealToggle.Resolve(_keyRevealed, ApiKeyBox.Password, ApiKeyPlainBox.Text);
+
+        _syncingKey = true;
+        try
+        {
+            // 两个控件都写入同一个值，来回切换才不会丢内容。
+            ApiKeyBox.Password = value;
+            ApiKeyPlainBox.Text = value;
+        }
+        finally
+        {
+            _syncingKey = false;
+        }
+
         _keyRevealed = revealed;
         ApiKeyBox.Visibility = revealed ? Visibility.Collapsed : Visibility.Visible;
         ApiKeyPlainBox.Visibility = revealed ? Visibility.Visible : Visibility.Collapsed;
-        RevealKeyButton.Content = revealed ? "隐藏" : "显示";
-    }
 
-    private void RevealKey_Click(object sender, RoutedEventArgs e)
-    {
-        if (_keyRevealed)
+        if (RevealKeyIcon is not null)
         {
-            ApiKeyBox.Password = ApiKeyPlainBox.Text;
-            SetKeyRevealed(false);
-            return;
+            // 睁眼 = 当前明文可见（点它去隐藏）；闭眼 = 当前隐藏（点它去显示）。
+            RevealKeyIcon.Data = (System.Windows.Media.Geometry)FindResource(
+                revealed ? "IconEyeOff" : "IconEye");
         }
-
-        ApiKeyPlainBox.Text = ApiKeyBox.Password;
-        ApiKeyBox.Clear();
-        SetKeyRevealed(true);
+        RevealKeyButton.ToolTip = revealed ? "隐藏密钥" : "显示密钥";
     }
+
+    private void RevealKey_Click(object sender, RoutedEventArgs e) => SetKeyRevealed(!_keyRevealed);
 
     private void ApiKey_PasswordChanged(object sender, RoutedEventArgs e)
     {
-        if (!_keyRevealed) ApiKeyPlainBox.Text = ApiKeyBox.Password;
+        if (_syncingKey || _keyRevealed) return;
+        _syncingKey = true;
+        try { ApiKeyPlainBox.Text = ApiKeyBox.Password; }
+        finally { _syncingKey = false; }
     }
 
     private void ApiKeyPlain_TextChanged(object sender, TextChangedEventArgs e)
     {
-        if (_keyRevealed) ApiKeyBox.Password = ApiKeyPlainBox.Text;
+        if (_syncingKey || !_keyRevealed) return;
+        _syncingKey = true;
+        try { ApiKeyBox.Password = ApiKeyPlainBox.Text; }
+        finally { _syncingKey = false; }
     }
 
     private void Mode_Checked(object sender, RoutedEventArgs e)
@@ -613,7 +858,7 @@ public partial class PreviewWindow : Window
             TextWrapping = TextWrapping.Wrap,
             Margin = new Thickness(12, 10, 12, 0),
             FontSize = 11,
-            Foreground = (System.Windows.Media.Brush)FindResource("MutedTextBrush"),
+            Foreground = (System.Windows.Media.Brush)FindResource("MutedBrush"),
         };
 
         var close = new Button

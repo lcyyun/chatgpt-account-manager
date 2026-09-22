@@ -35,15 +35,15 @@ public sealed class ProviderModelProbeTests
     {
         var handler = new StubHandler("""
             {"object":"list","data":[
-              {"id":"mimo-v2.6-pro","object":"model","owned_by":"xiaomi"},
-              {"id":"mimo-v2.6-flash","object":"model","owned_by":"xiaomi"}]}
+              {"id":"model-alpha-lower","object":"model","owned_by":"vendor"},
+              {"id":"model-beta-lower","object":"model","owned_by":"vendor"}]}
             """);
         var probe = Probe("", handler: handler);
 
         var result = await probe.ListModelsAsync("https://api.example.com/v1", "sk-x");
 
         Assert.True(result.Success);
-        Assert.Equal(["mimo-v2.6-pro", "mimo-v2.6-flash"], result.Models);
+        Assert.Equal(["model-alpha-lower", "model-beta-lower"], result.Models);
         Assert.Equal("https://api.example.com/v1/models", handler.LastUrl);
         Assert.Equal("Bearer sk-x", handler.LastAuth);
     }
@@ -87,10 +87,10 @@ public sealed class ProviderModelProbeTests
     public async Task PreservesEndpointCasing()
     {
         // 大小写就是这里的全部意义：端点区分大小写，必须原样带出来。
-        var result = await Probe("""{"data":[{"id":"MiMo-V2.6-Pro"}]}""")
+        var result = await Probe("""{"data":[{"id":"Model-Alpha-MixedCase"}]}""")
             .ListModelsAsync("https://x/v1", "k");
 
-        Assert.Equal("MiMo-V2.6-Pro", Assert.Single(result.Models));
+        Assert.Equal("Model-Alpha-MixedCase", Assert.Single(result.Models));
     }
 
     [Fact]

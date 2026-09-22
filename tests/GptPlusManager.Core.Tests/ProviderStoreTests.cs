@@ -11,7 +11,6 @@ public sealed class ProviderStoreTests
         Id = "acme",
         DisplayName = "Acme Gateway",
         BaseUrl = "https://api.acme.test/v1/",
-        ContextWindow = 200_000,
         SupportsImages = true,
         Models =
         {
@@ -151,6 +150,130 @@ public sealed class ProviderStoreTests
         Assert.Equal("acme-renamed", await registry.GetActiveProviderIdAsync());
     }
 
+    [Fact]
+    public void Normalize_MigratesLegacyProviderContextWindowDownToModels()
+    {
+        // Older configs stored the window at provider level. Now that it is per-model,
+        // an un-migrated value would silently vanish from the UI while still being the
+        // number the user typed. It must survive as each model's own setting.
+        var provider = new ProviderDefinition
+        {
+            Id = "legacy",
+            BaseUrl = "https://x/v1",
+            LegacyContextWindow = 800_000,
+            Models = { new ProviderModel { Slug = "m1" }, new ProviderModel { Slug = "m2" } },
+        };
+
+        provider.Normalize();
+
+        Assert.Equal(800_000, provider.Models[0].ContextWindow);
+        Assert.Equal(800_000, provider.Models[1].ContextWindow);
+        Assert.Null(provider.LegacyContextWindow); // cleared, so it never applies twice
+    }
+
+    [Fact]
+    public void Normalize_LegacyMigrationDoesNotOverridePerModelWindow()
+    {
+        var provider = new ProviderDefinition
+        {
+            Id = "legacy",
+            BaseUrl = "https://x/v1",
+            LegacyContextWindow = 800_000,
+            Models = { new ProviderModel { Slug = "m1", ContextWindow = 32_000 } },
+        };
+
+        provider.Normalize();
+
+        // An explicit per-model value wins; only unset models inherit the old default.
+        Assert.Equal(32_000, provider.Models[0].ContextWindow);
+    }
+
+    [Fact]
+    public async Task LegacyContextWindowRoundTripsThroughJson()
+    {
+        using var data = new TemporaryDirectory();
+        var registry = new ProviderRegistry(data.Path);
+        await registry.SaveAsync([
+            new ProviderDefinition
+            {
+                Id = "legacy",
+                BaseUrl = "https://x/v1",
+                LegacyContextWindow = 800_000,
+                Models = { new ProviderModel { Slug = "m1" } },
+            },
+        ], "legacy");
+
+        // The legacy field must still deserialize, otherwise an existing providers.json
+        // would lose the value before Normalize ever gets a chance to migrate it.
+        var text = await File.ReadAllTextAsync(registry.FilePath);
+        Assert.Contains("ContextWindow", text);
+        var loaded = Assert.Single(await registry.LoadAsync());
+        Assert.Equal(800_000, loaded.Models[0].ContextWindow);
+    }
+
+    [Fact]
+    public void Normalize_InheritsProviderImageSupportIntoModels()
+    {
+        var provider = new ProviderDefinition
+        {
+            Id = "p",
+            BaseUrl = "https://x/v1",
+            SupportsImages = true,
+            Models = { new ProviderModel { Slug = "m1" }, new ProviderModel { Slug = "m2" } },
+        };
+
+        provider.Normalize();
+
+        Assert.True(provider.Models[0].SupportsImages);
+        Assert.All(provider.Models, m => Assert.True(m.Enabled)); // new models default to enabled
+        Assert.Equal(2, provider.EnabledModels.Count);
+
+        // 上下文窗口不再从供应商级继承——它现在是逐模型设置，
+        // 未设置就是未设置，由目录生成时回落到默认值。
+        Assert.Null(provider.Models[0].ContextWindow);
+    }
+
+    [Fact]
+    public async Task ModelCatalogBuilder_ExcludesDisabledModels()
+    {
+        using var profile = new TemporaryDirectory();
+        WriteSampleCache(profile);
+        var builder = new ModelCatalogBuilder(profile.Path);
+        var output = Path.Combine(profile.Path, "catalog.json");
+        var provider = CatalogProvider();
+        provider.Models[1].Enabled = false;
+
+        var result = await builder.BuildAsync(provider, output);
+
+        // A disabled model stays in the user's config (so it can be turned back on)
+        // but must never reach Codex's picker.
+        Assert.Single(result.Slugs);
+        var models = JsonNode.Parse(await File.ReadAllTextAsync(output))!
+            .AsObject()["models"]!.AsArray();
+        Assert.Single(models);
+        Assert.Equal("acme-large", models[0]!.AsObject()["slug"]!.GetValue<string>());
+        Assert.Equal(2, provider.Models.Count);
+    }
+
+    [Fact]
+    public async Task ModelCatalogBuilder_UsesPerModelContextWindow()
+    {
+        using var profile = new TemporaryDirectory();
+        WriteSampleCache(profile);
+        var builder = new ModelCatalogBuilder(profile.Path);
+        var output = Path.Combine(profile.Path, "catalog.json");
+        var provider = CatalogProvider();
+        provider.Models[0].ContextWindow = 256_000; // set explicitly for this model
+        provider.Models[1].ContextWindow = 100_000; // a different model, a different window
+
+        await builder.BuildAsync(provider, output);
+
+        var models = JsonNode.Parse(await File.ReadAllTextAsync(output))!
+            .AsObject()["models"]!.AsArray();
+        Assert.Equal(256_000, models[0]!.AsObject()["context_window"]!.GetValue<int>());
+        Assert.Equal(100_000, models[1]!.AsObject()["context_window"]!.GetValue<int>());
+    }
+
     // ---- ModelCatalogBuilder ----
 
     private static string WriteSampleCache(TemporaryDirectory profile)
@@ -201,7 +324,6 @@ public sealed class ProviderStoreTests
         Id = "acme",
         DisplayName = "Acme Gateway",
         BaseUrl = "https://api.acme.test/v1",
-        ContextWindow = 200_000,
         SupportsImages = false,
         Models =
         {
@@ -273,8 +395,8 @@ public sealed class ProviderStoreTests
             .AsObject()["models"]!.AsArray()[0]!.AsObject();
 
         // use_responses_lite is a protocol selector, not official branding. Stripping it
-        // made the Xiaomi endpoint reject every request with
-        // "custom tools require MiMo freeform Responses lite mode", so it must survive.
+        // made an endpoint reject every request with
+        // "custom tools require freeform Responses lite mode", so it must survive.
         Assert.NotNull(model["use_responses_lite"]);
 
         // Same reasoning: these describe how to talk, not whose service it is.
@@ -289,7 +411,9 @@ public sealed class ProviderStoreTests
         var builder = new ModelCatalogBuilder(profile.Path);
         var output = Path.Combine(profile.Path, "catalog.json");
 
-        await builder.BuildAsync(CatalogProvider(), output);
+        var provider = CatalogProvider();
+        provider.Models[0].ContextWindow = 200_000;
+        await builder.BuildAsync(provider, output);
 
         var model = JsonNode.Parse(await File.ReadAllTextAsync(output))!
             .AsObject()["models"]!.AsArray()[0]!.AsObject();
@@ -310,7 +434,8 @@ public sealed class ProviderStoreTests
         var builder = new ModelCatalogBuilder(profile.Path);
         var output = Path.Combine(profile.Path, "catalog.json");
         var provider = CatalogProvider();
-        provider.ContextWindow = null;
+        provider.Models[0].ContextWindow = null;
+        provider.Models[1].ContextWindow = null;
 
         await builder.BuildAsync(provider, output);
 

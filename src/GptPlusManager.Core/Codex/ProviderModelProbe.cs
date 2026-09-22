@@ -24,9 +24,9 @@ public sealed record ModelProbeResult
 /// 向第三方端点查询它实际支持的模型名（<c>GET {baseUrl}/models</c>）。
 ///
 /// <para><b>为什么需要这个：</b>模型 ID 是端点自己定义的，大小写与命名规则各不相同，
-/// 而且完全没有约定。实测小米端点就区分大小写——填 <c>MiMo-V2.6-Pro</c> 会被拒，
-/// 必须写 <c>mimo-v2.6-pro</c>。用户手填几乎必然踩坑，而 Codex 报的
-/// "Unsupported model" 完全没提示该怎么改。所以让端点自己报出清单。</para>
+/// 而且完全没有约定。实测有的端点区分大小写——例如把 <c>Foo-Bar</c> 写成
+/// <c>foo-bar</c> 才被接受，而 Codex 只回一句 "Unsupported model"，
+/// 完全没提示该怎么改。用户手填几乎必然踩坑，所以让端点自己报出清单。</para>
 /// </summary>
 public sealed class ProviderModelProbe
 {

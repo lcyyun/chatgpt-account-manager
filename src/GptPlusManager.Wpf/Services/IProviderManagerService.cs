@@ -38,6 +38,18 @@ public interface IProviderManagerService : IDisposable
     Task<ProviderModelList> FetchModelsAsync(
         string baseUrl, string? apiKey, CancellationToken cancellationToken = default);
 
+    /// <summary>
+    /// 端到端自检：连通性 → 模型名 → 带工具的请求。
+    /// 切换之前先跑一遍，把问题挡在重启 Codex 之前。
+    /// </summary>
+    /// <param name="usesResponsesLite">
+    /// 该模型的目录条目是否启用 responses lite。Codex 会把它翻成请求头发给端点，
+    /// 自检必须一致，否则结果与真实使用不符。
+    /// </param>
+    Task<ConnectionTestReport> TestConnectionAsync(
+        string baseUrl, string? apiKey, string model, bool usesResponsesLite,
+        CancellationToken cancellationToken = default);
+
     /// <summary>回到官方模式。返回备份文件路径（无改动时为 null）。</summary>
     Task<string?> ApplyOfficialAsync(CancellationToken cancellationToken = default);
 
@@ -46,6 +58,12 @@ public interface IProviderManagerService : IDisposable
 
     /// <summary>最近一次自动备份的路径，供一键还原。</summary>
     string? FindLatestBackup();
+
+    /// <summary>
+    /// 若配置里的取 token 命令已不指向当前这份程序（程序被移动或改名过），
+    /// 就地改写为当前路径。返回备份路径；无需修复时返回 null。
+    /// </summary>
+    Task<string?> RepairTokenCommandPathAsync(CancellationToken cancellationToken = default);
 
     Task RestoreAsync(string backupPath, CancellationToken cancellationToken = default);
 

@@ -27,19 +27,29 @@ public sealed record CodexConfigSnapshot
     public bool CatalogFileExists { get; init; }
 
     /// <summary>
-    /// 管理块里记录的取 token 命令路径。为 null 表示未使用命令式配方。
-    /// </summary>
-    public string? TokenCommandPath { get; init; }
-
-    /// <summary>
-    /// 该命令路径当前是否真的存在。
-    ///
-    /// <para>命令式配方把"本应用自己的 exe 路径"写进了 config.toml。如果之后应用被
+    /// 命令式配方把"本应用自己的 exe 路径"写进了 config.toml。如果之后应用被
     /// 移动、改名或重新发布到别的目录，路径就失效了——而 Codex 只会不断重试并报
-    /// "wrote non-UTF-8 data"/"failed to resolve external auth" 这类毫无指向性的错，
-    /// 用户根本猜不到是路径问题。所以这里主动检测。</para>
+    /// "wrote non-UTF-8 data"/"Invalid API Key" 这类毫无指向性的错，
+    /// 用户根本猜不到是路径问题。所以这里主动检测。
+    ///
+    /// <para>注意 <see cref="StoredTokenCommandPath"/> 与 <see cref="TokenCommandPath"/> 的区别：
+    /// 前者是配置里原样记录的值，后者是<b>当前实际应该用</b>的路径。两者不同即表示
+    /// 程序被移动过，需要修复。</para>
     /// </summary>
     public bool TokenCommandExists { get; init; }
+
+    /// <summary>配置里原样记录的取 token 命令路径。</summary>
+    public string? StoredTokenCommandPath { get; init; }
+
+    /// <summary>当前进程自身的可执行文件路径——即现在应该写进配置的值。</summary>
+    public string? ExpectedTokenCommandPath { get; init; }
+
+    /// <summary>
+    /// 配置里的命令路径是否指向当前运行的这份程序。为 false 时应当重新应用一次来修复。
+    /// </summary>
+    public bool TokenCommandMatchesCurrentApp =>
+        string.IsNullOrWhiteSpace(StoredTokenCommandPath) ||
+        string.Equals(StoredTokenCommandPath, ExpectedTokenCommandPath, StringComparison.OrdinalIgnoreCase);
 }
 
 /// <summary>
@@ -198,6 +208,68 @@ public sealed class CodexConfigStore : IDisposable
             Directory.CreateDirectory(CodexHome);
             var bytes = await File.ReadAllBytesAsync(backupPath, cancellationToken).ConfigureAwait(false);
             await WriteAtomicAsync(bytes, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    /// <summary>
+    /// 若配置里的取 token 命令路径已不是当前这份程序，就地改写为当前路径。
+    ///
+    /// <para>这是对"程序被移动/改名后 Codex 静默取不到密钥"的自愈：用户不需要理解
+    /// 发生了什么，重新应用一次即可。只在确实不一致时才写盘，并保留备份。</para>
+    ///
+    /// <para>返回备份路径；无需修复时返回 null。</para>
+    /// </summary>
+    public async Task<string?> RepairTokenCommandPathAsync(CancellationToken cancellationToken = default)
+    {
+        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            var original = await ReadRawAsync(cancellationToken).ConfigureAwait(false);
+            var lines = SplitLines(original.Text);
+
+            var stored = ExtractTokenCommand(lines);
+            if (string.IsNullOrWhiteSpace(stored)) return null; // 非命令式，无需处理
+
+            var expected = TokenCommandPath();
+            if (string.Equals(stored, expected, StringComparison.OrdinalIgnoreCase)) return null;
+
+            var patched = new List<string>(lines.Count);
+            var replaced = false;
+            foreach (var line in lines)
+            {
+                if (!replaced && TryMatchKey(line, "auth") && line.Contains("command ="))
+                {
+                    var quoteIndex = line.IndexOf("command =", StringComparison.Ordinal) + "command =".Length;
+                    var rest = line[quoteIndex..];
+                    var leading = rest.Length - rest.TrimStart().Length;
+                    var quoteAt = quoteIndex + leading;
+                    if (quoteAt < line.Length && line[quoteAt] is '\'' or '"')
+                    {
+                        var quote = line[quoteAt];
+                        var end = line.IndexOf(quote, quoteAt + 1);
+                        if (end > quoteAt)
+                        {
+                            // 路径用字面量字符串，反斜杠无需转义。
+                            var replacement = quote == '\''
+                                ? expected.Replace("'", "''")
+                                : expected.Replace("\\", "\\\\").Replace("\"", "\\\"");
+                            patched.Add(line[..(quoteAt + 1)] + replacement + line[end..]);
+                            replaced = true;
+                            continue;
+                        }
+                    }
+                }
+                patched.Add(line);
+            }
+
+            if (!replaced) return null;
+
+            var updated = original with { Text = JoinLines(patched, original.NewLine) };
+            return await WriteWithValidationAsync(original, updated, cancellationToken).ConfigureAwait(false);
         }
         finally
         {
@@ -600,7 +672,8 @@ public sealed class CodexConfigStore : IDisposable
             ModelCatalogJson = catalog,
             HasManagedBlock = managed,
             CatalogFileExists = !string.IsNullOrWhiteSpace(catalog) && File.Exists(catalog),
-            TokenCommandPath = tokenCommand,
+            StoredTokenCommandPath = tokenCommand,
+            ExpectedTokenCommandPath = TokenCommandPath(),
             TokenCommandExists = string.IsNullOrWhiteSpace(tokenCommand) || File.Exists(tokenCommand),
         };
     }

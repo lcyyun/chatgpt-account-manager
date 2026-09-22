@@ -11,6 +11,7 @@ public sealed class CoreProviderManagerService : IProviderManagerService
     private readonly ProviderSecrets _secrets;
     private readonly ModelCatalogBuilder _catalogs;
     private readonly ProviderModelProbe _probe = new();
+    private readonly ProviderConnectionTester _tester = new();
     private readonly ClientProcessService _processes = new();
 
     /// <param name="userProfile">用户主目录（决定 <c>~/.codex</c> 位置）；测试可注入临时目录。</param>
@@ -83,8 +84,8 @@ public sealed class CoreProviderManagerService : IProviderManagerService
 
         // 预检：端点认不认这些模型 ID。
         //
-        // 模型 ID 由端点自定义，大小写规则各家不同（实测小米端点区分大小写：
-        // MiMo-V2.6-Pro 被拒，必须写 mimo-v2.6-pro）。填错时 Codex 要到真正发请求
+        // 模型 ID 由端点自定义，大小写规则各家不同（实测有的端点区分大小写：
+        // Foo-Bar 被拒，必须写 foo-bar）。填错时 Codex 要到真正发请求
         // 才报 "Unsupported model"，完全看不出该改成什么，所以在这里就问清楚。
         //
         // 探测失败（端点不支持 /models、网络不通等）不拦——不能因为一个探测接口
@@ -169,6 +170,19 @@ public sealed class CoreProviderManagerService : IProviderManagerService
         return new ProviderModelList(result.Success, result.Models, result.Error);
     }
 
+    public async Task<ConnectionTestReport> TestConnectionAsync(
+        string baseUrl, string? apiKey, string model, bool usesResponsesLite,
+        CancellationToken cancellationToken = default)
+    {
+        // 自检要与真实请求一致：Codex 会把目录里的 use_responses_lite 翻成请求头。
+        // 没显式传时，直接问目录生成器将来会写什么，避免这里再维护一个平行开关。
+        var lite = usesResponsesLite || await _catalogs
+            .TemplateUsesResponsesLiteAsync(cancellationToken)
+            .ConfigureAwait(false);
+
+        return await _tester.TestAsync(baseUrl, apiKey, model, lite, cancellationToken).ConfigureAwait(false);
+    }
+
     public async Task<string?> ApplyOfficialAsync(CancellationToken cancellationToken = default)
     {
         var backup = await _config.ApplyOfficialAsync(cancellationToken).ConfigureAwait(false);
@@ -210,6 +224,9 @@ public sealed class CoreProviderManagerService : IProviderManagerService
             .OrderByDescending(File.GetLastWriteTimeUtc)
             .FirstOrDefault();
     }
+
+    public Task<string?> RepairTokenCommandPathAsync(CancellationToken cancellationToken = default) =>
+        _config.RepairTokenCommandPathAsync(cancellationToken);
 
     public Task RestoreAsync(string backupPath, CancellationToken cancellationToken = default) =>
         _config.RestoreAsync(backupPath, cancellationToken);
