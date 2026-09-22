@@ -14,6 +14,10 @@ auth.json.*.bak
 migration-backup-*/
 *.bak-*
 *.appbak
+# 第三方模型：DPAPI 密钥与供应商定义（含 base_url 等个人化信息）
+provider-secrets.json
+providers.json
+config.toml.*.bak
 
 # ── 发布产物与旧版二进制 ──────────────────────────────────
 publish-wpf/

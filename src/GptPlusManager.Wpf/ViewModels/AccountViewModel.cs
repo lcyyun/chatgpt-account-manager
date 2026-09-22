@@ -205,6 +205,9 @@ public sealed partial class AccountViewModel : ObservableObject
         finally { IsBusy = false; }
     }
 
+    /// <summary>用最新快照刷新显示（例如 Codex 当前账号在别处被切换后）。</summary>
+    public void RefreshFromSnapshot(AccountSnapshot snapshot) => Apply(snapshot);
+
     private void Apply(AccountSnapshot s)
     {
         Email = s.Email; Password = s.Password; TwoFactorSecret = s.TwoFactorSecret; PurchasedAt = s.PurchasedAt; Note = s.Note;

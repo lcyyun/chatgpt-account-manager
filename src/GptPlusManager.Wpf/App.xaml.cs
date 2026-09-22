@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Threading;
 using System.Windows;
+using GptPlusManager.Wpf.Services;
 
 namespace GptPlusManager.Wpf;
 
@@ -10,6 +11,15 @@ public partial class App : Application
 
     protected override void OnStartup(StartupEventArgs e)
     {
+        // 被 Codex 以 `--provider-token <id>` 调用：把该供应商的密钥打到 stdout 后退出。
+        // 这是"命令式"密钥注入的实现——密钥因此不必写进 config.toml。
+        // 必须在单实例检查之前：主程序开着时也要能被并发调用。
+        if (e.Args.Length >= 2 && e.Args[0] == "--provider-token")
+        {
+            Shutdown(TokenCommand.Run(e.Args[1]));
+            return;
+        }
+
         _instanceMutex = new Mutex(true, "Local\\GptPlusManager.Wpf.SingleInstance", out var createdNew);
         if (!createdNew)
         {

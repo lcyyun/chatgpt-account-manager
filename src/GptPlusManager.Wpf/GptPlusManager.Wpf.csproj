@@ -15,7 +15,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <UseWPF>true</UseWPF>
 
-    <Version>0.3.1</Version>
+    <Version>0.4.0</Version>
     <AssemblyName>ChatGptAccountManager</AssemblyName>
     <RootNamespace>GptPlusManager.Wpf</RootNamespace>
     <Product>ChatGPT Account Manager</Product>

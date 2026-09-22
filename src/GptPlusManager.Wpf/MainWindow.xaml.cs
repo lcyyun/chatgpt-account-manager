@@ -24,6 +24,7 @@ public partial class MainWindow : Window
     private bool _isDragging;
     private bool _dropAccepted;
     private bool _previewQueued;
+    private ProviderPage? _providerPage;
     private MainViewModel? ViewModel => DataContext as MainViewModel;
 
     public MainWindow()
@@ -31,9 +32,70 @@ public partial class MainWindow : Window
         InitializeComponent();
         var root = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
         var dataRoot = System.IO.Path.Combine(root, "gptplus");
-        DataContext = new MainViewModel(new CoreAccountManagerService(dataRoot), new WpfUiService());
-        Loaded += async (_, _) => await ViewModel!.InitializeCommand.ExecuteAsync(null);
-        Closed += (_, _) => ViewModel?.Dispose();
+        var providerService = new CoreProviderManagerService();
+        var viewModel = new MainViewModel(new CoreAccountManagerService(dataRoot), providerService, new WpfUiService());
+        DataContext = viewModel;
+
+        _providerPage = new ProviderPage(providerService);
+        _providerPage.StatusChanged += (_, message) => viewModel.ShowToast(message, false);
+        _providerPage.CodexRestarted += async (_, _) => await viewModel.RefreshCurrentAccountAsync();
+        viewModel.ProviderPage = _providerPage;
+        ThirdPartyPageHost.Content = _providerPage;
+
+        Loaded += async (_, _) => await viewModel.InitializeCommand.ExecuteAsync(null);
+        Loaded += async (_, _) => await RefreshThirdPartyHintAsync();
+        Closed += (_, _) => viewModel.Dispose();
+    }
+
+    /// <summary>
+    /// 在「官方账号」与「第三方」两个界面之间切换。
+    ///
+    /// <para>注意：XAML 里的 <c>IsChecked="True"</c> 会在 <see cref="Window.InitializeComponent"/>
+    /// 期间就触发本处理器，那时字段还是 null。所以这里必须容忍"页面尚未装配"这一次调用，
+    /// 真正的初始化在构造函数末尾完成。</para>
+    /// </summary>
+    private async void PageTab_Checked(object sender, RoutedEventArgs e)
+    {
+        if (_providerPage is null || ThirdPartyPageHost is null || OfficialPage is null) return;
+
+        var thirdParty = ThirdPartyPageTab.IsChecked == true;
+
+        OfficialPage.Visibility = thirdParty ? Visibility.Collapsed : Visibility.Visible;
+        OfficialToolbar.Visibility = thirdParty ? Visibility.Collapsed : Visibility.Visible;
+        ThirdPartyPageHost.Visibility = thirdParty ? Visibility.Visible : Visibility.Collapsed;
+        ThirdPartyToolbar.Visibility = thirdParty ? Visibility.Visible : Visibility.Collapsed;
+
+        // 验证码与搜索只对官方账号页有意义，第三方页让出位置。
+        TotpBadge.Visibility = thirdParty ? Visibility.Collapsed : Visibility.Visible;
+        SearchBox.Visibility = thirdParty ? Visibility.Collapsed : Visibility.Visible;
+
+        if (thirdParty)
+        {
+            await _providerPage.ActivateAsync();
+            ThirdPartyTabHint.Text = string.Empty;
+        }
+        else
+        {
+            await RefreshThirdPartyHintAsync();
+        }
+    }
+
+    /// <summary>在标签上提示第三方模式是否生效，避免用户忘记自己切过。</summary>
+    private async Task RefreshThirdPartyHintAsync()
+    {
+        if (_providerPage is null || ThirdPartyTabHint is null) return;
+
+        try
+        {
+            var snapshot = await _providerPage.GetSnapshotAsync();
+            ThirdPartyTabHint.Text = snapshot.Mode == Core.Codex.CodexRoutingMode.ThirdParty
+                ? $"● 第三方模式生效中（{snapshot.Model}）"
+                : string.Empty;
+        }
+        catch (Exception)
+        {
+            ThirdPartyTabHint.Text = string.Empty;
+        }
     }
 
     private void DragHandle_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)

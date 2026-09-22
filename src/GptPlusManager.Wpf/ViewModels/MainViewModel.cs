@@ -14,19 +14,25 @@ namespace GptPlusManager.Wpf.ViewModels;
 public sealed partial class MainViewModel : ObservableObject, IDisposable
 {
     private readonly IAccountManagerService _service;
+    private readonly IProviderManagerService _providers;
     private readonly IUiService _ui;
     private readonly DispatcherTimer _clock;
     private CancellationTokenSource? _toastCancellation;
 
-    public MainViewModel(IAccountManagerService service, IUiService ui)
+    public MainViewModel(IAccountManagerService service, IProviderManagerService providers, IUiService ui)
     {
         _service = service;
+        _providers = providers;
         _ui = ui;
         AccountsView = CollectionViewSource.GetDefaultView(Accounts);
         AccountsView.Filter = FilterAccount;
         InitializeCommand = new AsyncRelayCommand(InitializeAsync, () => !IsBusy);
         AddAccountCommand = new RelayCommand(AddAccount, () => !IsBusy);
         ExportCommand = new RelayCommand(() => ExportWindow.ShowDialog(_service, _ui), () => !IsBusy);
+        SaveProviderCommand = new AsyncRelayCommand(SaveProviderAsync, () => !IsBusy);
+        PreviewProviderCommand = new AsyncRelayCommand(PreviewProviderAsync, () => !IsBusy);
+        RestoreConfigCommand = new AsyncRelayCommand(RestoreConfigAsync, () => !IsBusy);
+        ApplyProviderCommand = new AsyncRelayCommand(ApplyProviderAsync, () => !IsBusy);
         OpenExportsFolderCommand = new RelayCommand(OpenExportsFolder);
         QueryAllCommand = new AsyncRelayCommand(QueryAllAsync, () => !IsBusy && Accounts.Count > 0);
         RestartCodexCommand = new AsyncRelayCommand(RestartCodexAsync, () => !IsBusy);
@@ -63,6 +69,18 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     public IAsyncRelayCommand InitializeCommand { get; }
     public IRelayCommand AddAccountCommand { get; }
     public IRelayCommand ExportCommand { get; }
+
+    /// <summary>
+    /// 「第三方」页面的动作。页面本身是 ProviderPage（有状态、含输入框），
+    /// 由 MainWindow 在创建时注入；ViewModel 只负责把工具栏按钮连过去。
+    /// </summary>
+    public IAsyncRelayCommand SaveProviderCommand { get; }
+    public IAsyncRelayCommand PreviewProviderCommand { get; }
+    public IAsyncRelayCommand RestoreConfigCommand { get; }
+    public IAsyncRelayCommand ApplyProviderCommand { get; }
+
+    /// <summary>由 MainWindow 在构造 ProviderPage 后注入。</summary>
+    public ProviderPage? ProviderPage { get; set; }
     public IRelayCommand OpenExportsFolderCommand { get; }
     public IAsyncRelayCommand QueryAllCommand { get; }
     public IAsyncRelayCommand RestartCodexCommand { get; }
@@ -74,6 +92,10 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     {
         InitializeCommand.NotifyCanExecuteChanged();
         ExportCommand.NotifyCanExecuteChanged();
+        SaveProviderCommand.NotifyCanExecuteChanged();
+        PreviewProviderCommand.NotifyCanExecuteChanged();
+        RestoreConfigCommand.NotifyCanExecuteChanged();
+        ApplyProviderCommand.NotifyCanExecuteChanged();
         QueryAllCommand.NotifyCanExecuteChanged(); RestartCodexCommand.NotifyCanExecuteChanged();
         ToggleKeepAliveCommand.NotifyCanExecuteChanged(); OnPropertyChanged(nameof(CanReorder));
     }
@@ -292,5 +314,59 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         OnPropertyChanged(nameof(CanReorder)); OnPropertyChanged(nameof(VisibleAccountCount)); OnPropertyChanged(nameof(InvalidAccountCount));
     }
 
-    public void Dispose() { _clock.Stop(); _toastCancellation?.Cancel(); _service.Dispose(); }
+    private async Task SaveProviderAsync()
+    {
+        if (ProviderPage is null) return;
+        await RunGlobalAsync(async _ =>
+        {
+            if (await ProviderPage.SaveAsync()) ShowToast("供应商已保存", false);
+        }, null);
+    }
+
+    private async Task PreviewProviderAsync()
+    {
+        if (ProviderPage is null) return;
+        await RunGlobalAsync(async _ => await ProviderPage.PreviewAsync(), null);
+    }
+
+    private async Task RestoreConfigAsync()
+    {
+        if (ProviderPage is null) return;
+        await RunGlobalAsync(async _ => await ProviderPage.RestoreLatestBackupAsync(), null);
+    }
+
+    private async Task ApplyProviderAsync()
+    {
+        if (ProviderPage is null) return;
+
+        // 应用会重启 Codex，属于有外部影响的操作，用忙碌遮罩挡住重复点击。
+        await RunGlobalAsync(async _ => await ProviderPage.ApplyAsync(), null);
+    }
+
+    /// <summary>切换模式会重启 Codex，账号页的"当前账号"缓存随之过期，重新读一次。</summary>
+    public async Task RefreshCurrentAccountAsync()
+    {
+        try
+        {
+            var current = await _service.LoadAccountsAsync();
+            foreach (var account in Accounts)
+            {
+                var snapshot = current.FirstOrDefault(s => s.Id == account.Id);
+                if (snapshot is not null) account.RefreshFromSnapshot(snapshot);
+            }
+            NotifyCounts();
+        }
+        catch (Exception)
+        {
+            // 刷新失败不影响刚完成的切换，不打扰用户。
+        }
+    }
+
+    public void Dispose()
+    {
+        _clock.Stop();
+        _toastCancellation?.Cancel();
+        _service.Dispose();
+        _providers.Dispose();
+    }
 }

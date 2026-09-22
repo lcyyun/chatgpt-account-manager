@@ -6,4 +6,10 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
 
+  <ItemGroup>
+    <!-- 仅用于校验生成的 config.toml 能被 TOML 解析器接受；写入仍是行级手术编辑。
+         损坏的 config.toml 会让 Codex 直接无法启动，这道校验值得一个依赖。 -->
+    <PackageReference Include="Tomlyn" Version="0.19.0" />
+  </ItemGroup>
+
 </Project>

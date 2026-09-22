@@ -158,11 +158,29 @@
     </Window.Resources>
 
     <Grid Background="{DynamicResource CanvasBrush}">
-        <Grid.RowDefinitions><RowDefinition Height="70"/><RowDefinition Height="*"/><RowDefinition Height="34"/></Grid.RowDefinitions>
-        <Border Grid.Row="0" Background="{DynamicResource SurfaceBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="0,0,0,1" Padding="16,12">
+        <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="70"/><RowDefinition Height="*"/><RowDefinition Height="34"/></Grid.RowDefinitions>
+
+        <!-- 页面切换：官方账号 / 第三方 两个独立界面 -->
+        <Border Grid.Row="0" Background="{DynamicResource SurfaceBrush}" BorderBrush="{DynamicResource BorderBrush}"
+                BorderThickness="0,0,0,1" Padding="16,10,16,0">
+            <StackPanel Orientation="Horizontal">
+                <RadioButton x:Name="OfficialPageTab" Content="官方账号" GroupName="Page" Style="{StaticResource PageTabButton}"
+                             IsChecked="True" Checked="PageTab_Checked"
+                             AutomationProperties.AutomationId="OfficialPageTab"/>
+                <RadioButton x:Name="ThirdPartyPageTab" Content="第三方" GroupName="Page" Style="{StaticResource PageTabButton}"
+                             Margin="6,0,0,0" Checked="PageTab_Checked"
+                             AutomationProperties.AutomationId="ThirdPartyPageTab"/>
+                <TextBlock x:Name="ThirdPartyTabHint" Style="{StaticResource MutedText}" FontSize="11"
+                           VerticalAlignment="Center" Margin="14,0,0,0"/>
+            </StackPanel>
+        </Border>
+
+        <Border Grid.Row="1" Background="{DynamicResource SurfaceBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="0,0,0,1" Padding="16,12">
             <Grid>
                 <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                <StackPanel Orientation="Horizontal">
+
+                <!-- 官方账号页工具栏 -->
+                <StackPanel x:Name="OfficialToolbar" Orientation="Horizontal">
                     <Button Command="{Binding AddAccountCommand}" Style="{StaticResource PrimaryButton}" Margin="0,0,8,0"
                             AutomationProperties.Name="添加账号">
                         <StackPanel Orientation="Horizontal"><Viewbox Width="18" Height="18" Margin="0,0,7,0"><Path Data="{StaticResource IconAdd}" Fill="{DynamicResource AccentTextBrush}"/></Viewbox><TextBlock Text="添加账号"/></StackPanel>
@@ -180,19 +198,40 @@
                     <Button Command="{Binding RestartCodexCommand}" Style="{StaticResource ToolbarButton}" AutomationProperties.Name="重启 Codex">
                         <StackPanel Orientation="Horizontal"><Viewbox Width="18" Height="18" Margin="0,0,7,0"><Path Data="{StaticResource IconRefresh}" Fill="{DynamicResource CyanBrush}"/></Viewbox><TextBlock Text="重启 Codex"/></StackPanel>
                     </Button>
+                </StackPanel>
+
+                <!-- 第三方页工具栏 -->
+                <StackPanel x:Name="ThirdPartyToolbar" Orientation="Horizontal" Visibility="Collapsed">
+                    <Button Command="{Binding SaveProviderCommand}" Style="{StaticResource PrimaryButton}" Margin="0,0,8,0"
+                            AutomationProperties.Name="保存供应商" AutomationProperties.AutomationId="SaveProviderButton">
+                        <TextBlock Text="保存供应商"/>
+                    </Button>
+                    <Button Command="{Binding PreviewProviderCommand}" Style="{StaticResource ToolbarButton}"
+                            AutomationProperties.Name="预览配置" AutomationProperties.AutomationId="PreviewProviderButton">
+                        <StackPanel Orientation="Horizontal"><Viewbox Width="18" Height="18" Margin="0,0,7,0"><Path Data="{StaticResource IconEye}" Fill="{DynamicResource TextBrush}"/></Viewbox><TextBlock Text="预览配置"/></StackPanel>
+                    </Button>
+                    <Button Command="{Binding RestoreConfigCommand}" Style="{StaticResource ToolbarButton}"
+                            AutomationProperties.Name="还原备份" AutomationProperties.AutomationId="RestoreConfigButton">
+                        <StackPanel Orientation="Horizontal"><Viewbox Width="18" Height="18" Margin="0,0,7,0"><Path Data="{StaticResource IconBackup}" Fill="{DynamicResource AmberBrush}"/></Viewbox><TextBlock Text="还原备份"/></StackPanel>
+                    </Button>
+                    <Button Command="{Binding ApplyProviderCommand}" Style="{StaticResource ToolbarButton}"
+                            AutomationProperties.Name="应用并重启 Codex" AutomationProperties.AutomationId="ApplyProviderButton">
+                        <StackPanel Orientation="Horizontal"><Viewbox Width="18" Height="18" Margin="0,0,7,0"><Path Data="{StaticResource IconRefresh}" Fill="{DynamicResource GreenBrush}"/></Viewbox><TextBlock Text="应用并重启 Codex"/></StackPanel>
+                    </Button>
+                </StackPanel>
+
+                <StackPanel Grid.Column="2" Orientation="Horizontal">
                     <Button Command="{Binding ToggleThemeCommand}" Style="{StaticResource ToolbarButton}"
                             AutomationProperties.Name="切换日间夜间模式" AutomationProperties.AutomationId="ThemeToggle">
                         <StackPanel Orientation="Horizontal"><Viewbox Width="18" Height="18" Margin="0,0,7,0"><Path Data="{StaticResource IconSun}" Fill="{DynamicResource AmberBrush}"/></Viewbox><TextBlock Text="{Binding ThemeLabel}"/></StackPanel>
                     </Button>
-                </StackPanel>
-                <StackPanel Grid.Column="2" Orientation="Horizontal">
-                    <Border Width="126" Height="38" Background="{DynamicResource InputBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" CornerRadius="7" Margin="0,0,10,0">
+                    <Border x:Name="TotpBadge" Width="126" Height="38" Background="{DynamicResource InputBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" CornerRadius="7" Margin="0,0,10,0">
                         <Grid>
                             <TextBlock Text="{Binding GlobalTotpCountdown, StringFormat=验证码 {0} 刷新}" HorizontalAlignment="Center" VerticalAlignment="Center" FontWeight="SemiBold"/>
                             <ProgressBar Maximum="30" Value="{Binding GlobalTotpRemaining}" Height="3" VerticalAlignment="Bottom" Margin="4" Style="{StaticResource ModernProgressBar}"/>
                         </Grid>
                     </Border>
-                    <Grid Width="230">
+                    <Grid x:Name="SearchBox" Width="230">
                         <TextBox Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}" Style="{StaticResource ModernTextBox}" Padding="36,8,10,8" ToolTip="搜索邮箱、备注或套餐"/>
                         <Viewbox Width="16" Height="16" HorizontalAlignment="Left" Margin="12,0,0,0" IsHitTestVisible="False"><Path Data="{StaticResource IconSearch}" Fill="{DynamicResource MutedBrush}"/></Viewbox>
                     </Grid>
@@ -200,21 +239,26 @@
             </Grid>
         </Border>
 
-        <AdornerDecorator Grid.Row="1">
-            <ScrollViewer x:Name="CardsScroll" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Padding="16"
-                          AllowDrop="True" PreviewDragOver="Cards_PreviewDragOver" PreviewDrop="Cards_PreviewDrop"
-                          PreviewDragLeave="Cards_PreviewDragLeave">
-                <ItemsControl x:Name="AccountsItems" ItemsSource="{Binding AccountsView}" ItemTemplate="{StaticResource AccountCardTemplate}">
-                    <ItemsControl.ItemsPanel>
-                        <ItemsPanelTemplate>
-                            <infra:ResponsiveGridPanel Breakpoint="1120" Gap="16"/>
-                        </ItemsPanelTemplate>
-                    </ItemsControl.ItemsPanel>
-                </ItemsControl>
-            </ScrollViewer>
-        </AdornerDecorator>
+        <!-- 页面内容 -->
+        <Grid Grid.Row="2">
+            <AdornerDecorator x:Name="OfficialPage">
+                <ScrollViewer x:Name="CardsScroll" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Padding="16"
+                              AllowDrop="True" PreviewDragOver="Cards_PreviewDragOver" PreviewDrop="Cards_PreviewDrop"
+                              PreviewDragLeave="Cards_PreviewDragLeave">
+                    <ItemsControl x:Name="AccountsItems" ItemsSource="{Binding AccountsView}" ItemTemplate="{StaticResource AccountCardTemplate}">
+                        <ItemsControl.ItemsPanel>
+                            <ItemsPanelTemplate>
+                                <infra:ResponsiveGridPanel Breakpoint="1120" Gap="16"/>
+                            </ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+                    </ItemsControl>
+                </ScrollViewer>
+            </AdornerDecorator>
 
-        <Border Grid.Row="2" Background="{DynamicResource SurfaceBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="0,1,0,0" Padding="14,0">
+            <ContentControl x:Name="ThirdPartyPageHost" Visibility="Collapsed" Padding="16"/>
+        </Grid>
+
+        <Border Grid.Row="3" Background="{DynamicResource SurfaceBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="0,1,0,0" Padding="14,0">
             <Grid>
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*"/>
@@ -237,12 +281,12 @@
             </Grid>
         </Border>
 
-        <Border Grid.RowSpan="3" HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="0,0,22,52"
+        <Border Grid.RowSpan="4" HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="0,0,22,52"
                 Style="{StaticResource ToastBorder}" Visibility="{Binding IsToastVisible, Converter={StaticResource BoolToVisibility}}">
             <TextBlock Text="{Binding ToastMessage}" FontWeight="SemiBold" MaxWidth="480" TextWrapping="Wrap"/>
         </Border>
 
-        <Border Grid.RowSpan="3" Background="{DynamicResource ScrimBrush}" Visibility="{Binding IsBusy, Converter={StaticResource BoolToVisibility}}">
+        <Border Grid.RowSpan="4" Background="{DynamicResource ScrimBrush}" Visibility="{Binding IsBusy, Converter={StaticResource BoolToVisibility}}">
             <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
                 <ProgressBar Width="180" Height="6" IsIndeterminate="True" Style="{StaticResource ModernProgressBar}"/>
                 <TextBlock Text="正在处理…" HorizontalAlignment="Center" Margin="0,13,0,0"/>
