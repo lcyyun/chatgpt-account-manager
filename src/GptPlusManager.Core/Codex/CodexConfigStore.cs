@@ -20,8 +20,17 @@ public sealed record CodexConfigSnapshot
     public string? ModelProvider { get; init; }
     public string? ModelCatalogJson { get; init; }
 
-    /// <summary>是否检测到本应用写入的管理块。</summary>
+    /// <summary>是否检测到本应用写入的内容。</summary>
     public bool HasManagedBlock { get; init; }
+
+    /// <summary>
+    /// 配置是否处于<b>旧版危险布局</b>：起止标记跨度过大（桌面版会把悬空注释搬到文件末尾，
+    /// 导致用户整份配置看起来都落在"待删范围"里）。
+    ///
+    /// <para>当前版本已不再按范围删除，所以即使如此也不会真的删数据；但旧版本会。
+    /// 检出后界面应提示用户重新应用一次，把文件规整成新格式。</para>
+    /// </summary>
+    public bool HasLegacyBlockLayout { get; init; }
 
     /// <summary>目录指向的文件是否真的存在——不存在时 Codex 会直接启动失败。</summary>
     public bool CatalogFileExists { get; init; }
@@ -65,15 +74,23 @@ public sealed record CodexConfigSnapshot
 /// Codex 会报 "Model provider not found" 且无法启动。</item>
 /// <item><b>保留原始编码</b>：行尾序列与 BOM 按原文件保持，避免整文件字节漂移。</item>
 /// <item>写前时间戳备份，写后校验"管理区外逐字节未变"+ TOML 可解析，失败自动回滚。</item>
+/// <item><b>绝不按"起止标记之间的范围"删除内容</b>：桌面版会重写 config.toml，
+/// 把悬空注释排到文件末尾——实测它把我们的结束标记挪到了最后一行，
+/// 于是用户整个配置都落进"待删范围"里，切回官方就会删光。
+/// 现在的做法是结构化识别（认自己的 provider 表与顶层键），标记只作单行注释。</item>
 /// </list>
 /// </summary>
 public sealed class CodexConfigStore : IDisposable
 {
-    private const string BeginMarker = "# --- GptPlus Manager managed block ---";
-    private const string EndMarker = "# --- end GptPlus Manager managed block ---";
+    /// <summary>
+    /// 旧版遗留的块标记。只作为<b>单行注释</b>清理，绝不用它们圈定删除范围——
+    /// 桌面版会把结束标记挪到文件末尾，按范围删就等于删掉整个文件。
+    /// </summary>
+    private const string LegacyBeginMarker = "# --- GptPlus Manager managed block ---";
+    private const string LegacyEndMarker = "# --- end GptPlus Manager managed block ---";
 
     /// <summary>
-    /// 管理块里记录"改动前顶层区域原文"的那一行。
+    /// 记录"改动前顶层区域原文"的那一行。
     ///
     /// <para>为什么不直接在切回官方时删掉三个顶层键：用户本来就可能自己设了
     /// <c>model = "..."</c>。我们只是<b>覆盖</b>了它，删掉就等于把用户的设置抹了。</para>
@@ -82,6 +99,18 @@ public sealed class CodexConfigStore : IDisposable
     /// 原样记下来，切回时整段还原——字节级精确，也不依赖"我们插在第几行"这种脆弱假设。</para>
     /// </summary>
     private const string HeadMarker = "# gptplus-head:";
+
+    /// <summary>
+    /// 记录当前管理的供应商 ID。用来准确认出哪一个 <c>[model_providers.*]</c> 是我们写的，
+    /// 从而只删自己那一张表。
+    /// </summary>
+    private const string ProviderMarker = "# gptplus-provider:";
+
+    /// <summary>
+    /// 命令式配方写在 provider 表里的特征串。即使标记注释被桌面版抹掉，
+    /// 也能据此认出这张表是我们写的（用户自己配的 provider 不会带这个）。
+    /// </summary>
+    private const string TokenCommandSignature = "--provider-token";
 
     private readonly SemaphoreSlim _gate = new(1, 1);
 
@@ -297,15 +326,17 @@ public sealed class CodexConfigStore : IDisposable
         lines = SetTopLevelKey(lines, "model_provider", TomlString(provider.SafeTomlKey()));
         lines = SetTopLevelKey(lines, "model_catalog_json", TomlLiteral(catalogPath));
 
-        // 追加管理块。三个顶层键必须在文件头部，而块内的 [model_providers.*] 是表，
-        //    只能出现在顶层键之后——插到首个已存在的 [table] 之前正好两全。
+        // 追加 provider 定义。
         //
-        //    块本身不加前导空行：那会在管理范围之外留下一个我们"多出来"的空行，
-        //    既让校验指纹对不上，也让切回官方时无法字节级还原。
+        // 不再使用"起止标记圈定范围"的写法：桌面版重写 config.toml 时会把悬空注释
+        // 排到文件末尾，结束标记一旦被挪到最后一行，用户整个配置都会落进"待删范围"。
+        // 现在只用单行注释标记，删除时按结构识别（见 RemoveManaged）。
+        //
+        // 插到首个已存在的 [table] 之前：三个顶层键属于文件头部，而 provider 表
+        // 必须排在顶层键之后。
         var managed = new List<string>
         {
-            BeginMarker,
-            $"{HeadMarker} {recordedHead}",
+            $"{ProviderMarker} {provider.SafeTomlKey()}",
             $"[model_providers.{TomlKey(provider.SafeTomlKey())}]",
             $"name = {TomlString(provider.DisplayName.Length > 0 ? provider.DisplayName : provider.Id)}",
             $"base_url = {TomlLiteral(provider.BaseUrl)}",
@@ -325,9 +356,8 @@ public sealed class CodexConfigStore : IDisposable
                 $"auth = {{ command = {TomlLiteral(TokenCommandPath())}, args = [\"--provider-token\", {TomlString(provider.Id)}] }}");
         }
 
-        managed.Add(EndMarker);
-        // 块尾留一个空行作视觉分隔，否则 "# --- end ---" 会和用户的下一个 [table]
-        // 粘在一起，读起来像出错了。这一行算管理区的一部分，移除时一并吃掉。
+        // 顶层区域记录：放在 provider 表之后，作为一行注释。
+        managed.Add($"{HeadMarker} {recordedHead}");
         managed.Add(string.Empty);
 
         lines.InsertRange(IndexOfFirstTable(lines), managed);
@@ -339,15 +369,19 @@ public sealed class CodexConfigStore : IDisposable
     {
         var lines = SplitLines(original.Text);
 
-        // 没有管理块说明本应用从未改过这个文件——此时"切回官方"必须是彻底的空操作，
-        // 否则会把用户自己写的顶层 model 一起删掉。
-        if (!lines.Any(l => l.Trim() == BeginMarker))
+        // "本应用是否改过这个文件"不再看块标记——桌面版会把悬空注释搬到文件末尾，
+        // 标记位置完全不可靠。改为看有没有我们写的痕迹：顶层区域记录，或自己的 provider 表。
+        var hasHeadRecord = FindRecordedHeadPayload(lines) is not null;
+        var hasProviderTable = HasManagedProviderTable(lines, out _);
+
+        if (!hasHeadRecord && !hasProviderTable)
         {
+            // 从未改过：彻底空操作，否则会把用户自己写的顶层 model 一起删掉。
             return original;
         }
 
-        var recordedHead = FindRecordedHeadPayload(lines) is { } payload
-            ? DecodeHead(payload)
+        var recordedHead = hasHeadRecord
+            ? DecodeHead(FindRecordedHeadPayload(lines)!)
             : null;
         var body = RemoveManaged(lines);
 
@@ -361,12 +395,51 @@ public sealed class CodexConfigStore : IDisposable
             };
         }
 
-        // 记录损坏（用户手删了那行？）时退回保守路径：至少把管理键清干净，
-        // 不留下一个 Codex 无法启动的半状态。
+        // 记录损坏或缺失（例如旧版本留下的配置）：至少把管理键清干净，
+        // 不留下"model_provider 指向不存在的表"这种 Codex 无法启动的半状态。
         body = RemoveTopLevelKey(body, "model");
         body = RemoveTopLevelKey(body, "model_provider");
         body = RemoveTopLevelKey(body, "model_catalog_json");
         return original with { Text = JoinLines(body, original.NewLine) };
+    }
+
+    /// <summary>
+    /// 检出旧版"起止标记圈定范围"的危险布局。
+    ///
+    /// <para>判据：起止标记都在，且它们之间夹着与托管内容无关的表
+    /// （<c>[plugins.*]</c> / <c>[mcp_servers.*]</c> / <c>[desktop]</c> 等）。
+    /// 那说明结束标记被桌面版搬到了文件末尾，旧版本会据此删掉用户全部配置。</para>
+    /// </summary>
+    private static bool DetectLegacyBlockLayout(List<string> lines)
+    {
+        var begin = lines.FindIndex(l => l.Trim() == LegacyBeginMarker);
+        var end = lines.FindLastIndex(l => l.Trim() == LegacyEndMarker);
+        if (begin < 0 || end < 0 || end <= begin) return false;
+
+        for (var i = begin; i <= end; i++)
+        {
+            if (!TryParseTableHeader(lines[i].Trim(), out var table)) continue;
+            // 托管内容只可能是 model_providers.*；出现别的表就说明范围被撑大了。
+            if (!table.StartsWith("model_providers.", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /// <summary>文件里是否存在本应用写入的 provider 表。</summary>
+    private static bool HasManagedProviderTable(List<string> lines, out string? tableName)    {
+        tableName = null;
+        for (var i = 0; i < lines.Count; i++)
+        {
+            if (!TryParseTableHeader(lines[i].Trim(), out var name)) continue;
+            if (!IsManagedProviderTable(lines, i, name)) continue;
+
+            tableName = name;
+            return true;
+        }
+        return false;
     }
 
     /// <summary>抄下当前顶层区域（首个 <c>[table]</c> 之前的所有行）并编码，供日后还原。</summary>
@@ -413,28 +486,120 @@ public sealed class CodexConfigStore : IDisposable
     }
 
     /// <summary>
-    /// 移除管理块（含块内 provider 定义）、两端标记，以及块尾那个分隔空行。
-    /// 分隔空行由本应用写入，因此也由本应用负责吃掉——这样反复切换不会让空行越积越多。
+    /// 移除本应用写入的内容：单行标记注释、顶层区域记录、以及<b>自己的</b>
+    /// <c>[model_providers.*]</c> 表。
+    ///
+    /// <para><b>绝不移除"起止标记之间的所有行"。</b>桌面版会重写 config.toml，把悬空注释
+    /// 排到文件末尾——实测它把结束标记挪到了最后一行，于是用户整个配置
+    /// （plugins / mcp_servers / desktop / windows / projects）都落进了"待删范围"。
+    /// 按范围删等于删掉整个文件。</para>
+    ///
+    /// <para>所以这里只做两件安全的事：删掉<b>自己写的那几行注释</b>（单行，删错也只损失一行），
+    /// 以及删掉<b>识别出属于自己的 provider 表</b>（按表名 + 内容特征判定）。</para>
     /// </summary>
     private static List<string> RemoveManaged(List<string> lines)
     {
         var result = new List<string>(lines.Count);
-        var inside = false;
-        var afterEnd = false;
-        foreach (var line in lines)
+        var index = 0;
+
+        while (index < lines.Count)
         {
-            var trimmed = line.Trim();
-            if (trimmed == BeginMarker) { inside = true; afterEnd = false; continue; }
-            if (trimmed == EndMarker) { inside = false; afterEnd = true; continue; }
-            if (inside) continue;
+            var trimmed = lines[index].Trim();
 
-            // 块尾第一个空行属于管理区；只吃一个，用户自己的空行不受影响。
-            if (afterEnd && trimmed.Length == 0) { afterEnd = false; continue; }
-            afterEnd = false;
+            // 单行标记注释：直接丢。
+            if (trimmed == LegacyBeginMarker || trimmed == LegacyEndMarker ||
+                trimmed.StartsWith(HeadMarker, StringComparison.Ordinal) ||
+                trimmed.StartsWith(ProviderMarker, StringComparison.Ordinal))
+            {
+                index++;
+                continue;
+            }
 
-            result.Add(line);
+            // provider 表头：若是我们写的，连同它的表体一起跳过。
+            if (TryParseTableHeader(trimmed, out var tableName) &&
+                IsManagedProviderTable(lines, index, tableName))
+            {
+                index = SkipTable(lines, index);
+                continue;
+            }
+
+            result.Add(lines[index]);
+            index++;
         }
+
         return result;
+    }
+
+    /// <summary>解析 <c>[a.b]</c> 形式的表头，返回表名。忽略 <c>[[array]]</c>。</summary>
+    private static bool TryParseTableHeader(string trimmedLine, out string tableName)
+    {
+        tableName = string.Empty;
+        if (trimmedLine.Length < 3 || trimmedLine[0] != '[' || trimmedLine[1] == '[') return false;
+
+        var close = trimmedLine.IndexOf(']');
+        if (close <= 1) return false;
+
+        tableName = trimmedLine[1..close].Trim();
+        return true;
+    }
+
+    /// <summary>跳过一张表（表头行 + 直到下一个表头或文件尾的行）。</summary>
+    private static int SkipTable(List<string> lines, int headerIndex)
+    {
+        var index = headerIndex + 1;
+        while (index < lines.Count && !IsTableHeader(lines[index])) index++;
+        return index;
+    }
+
+    private static bool IsTableHeader(string line)
+    {
+        var trimmed = line.TrimStart();
+        return trimmed.StartsWith('[') && !trimmed.StartsWith("#", StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// 判断某张 <c>[model_providers.*]</c> 表是否由本应用写入。
+    ///
+    /// <para>两条独立证据，任一成立即可：表体里出现本应用特有的取 token 命令签名，
+    /// 或者紧邻表头上方有我们写的 provider 标记。用"内容特征"是为了兼容旧版本
+    /// 写下的、只有块标记而没有 provider 标记的配置。</para>
+    ///
+    /// <para>判定保守是刻意的：漏认自己的表只是留下一点残留（用户能看见、能手动删），
+    /// 误认用户的表则会把他的自建 provider 删掉。宁可残留，不可误删。</para>
+    /// </summary>
+    private static bool IsManagedProviderTable(List<string> lines, int headerIndex, string tableName)
+    {
+        if (!tableName.StartsWith("model_providers.", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        // 证据一：紧邻上方的标记注释（可能隔着空行）。
+        for (var i = headerIndex - 1; i >= 0 && i >= headerIndex - 3; i--)
+        {
+            var above = lines[i].Trim();
+            if (above.Length == 0) continue;
+            if (above.StartsWith(ProviderMarker, StringComparison.Ordinal))
+            {
+                // 标记里记了 ID，与表名核对，避免标记与实际表不符时误删。
+                var marked = above[ProviderMarker.Length..].Trim();
+                return marked.Length == 0 ||
+                       string.Equals(tableName["model_providers.".Length..], marked, StringComparison.OrdinalIgnoreCase);
+            }
+            break;
+        }
+
+        // 证据二：表体里出现本应用特有的取 token 参数。
+        var end = SkipTable(lines, headerIndex);
+        for (var i = headerIndex + 1; i < end; i++)
+        {
+            if (lines[i].Contains(TokenCommandSignature, StringComparison.Ordinal))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /// <summary>顶层键只认首个 <c>[table]</c> 之前的行，避免误改 [profiles.*] 里的同名键。</summary>
@@ -653,7 +818,15 @@ public sealed class CodexConfigStore : IDisposable
             else if (TryMatchKey(lines[i], "model")) model = Unquote(ValueOf(lines[i]));
         }
 
-        var managed = lines.Any(l => l.Trim() == BeginMarker);
+        // "本应用是否改过这个文件"按结构判定：有顶层记录，或有自己的 provider 表。
+        // 不看块标记——桌面版会把悬空注释搬到文件末尾，标记位置不可靠。
+        var managed = FindRecordedHeadPayload(lines) is not null
+            || HasManagedProviderTable(lines, out _);
+
+        // 检出旧版危险布局：起止标记都在，但两者之间夹着大量非托管内容。
+        // 桌面版把结束标记搬到文件末尾就会出现这种形态。
+        var legacyLayout = DetectLegacyBlockLayout(lines);
+
         // provider 与 catalog 都在才算第三方模式——缺任一项 Codex 都会报错或行为异常。
         var mode = !string.IsNullOrWhiteSpace(provider) && !string.IsNullOrWhiteSpace(catalog)
             ? CodexRoutingMode.ThirdParty
@@ -671,6 +844,7 @@ public sealed class CodexConfigStore : IDisposable
             ModelProvider = provider,
             ModelCatalogJson = catalog,
             HasManagedBlock = managed,
+            HasLegacyBlockLayout = legacyLayout,
             CatalogFileExists = !string.IsNullOrWhiteSpace(catalog) && File.Exists(catalog),
             StoredTokenCommandPath = tokenCommand,
             ExpectedTokenCommandPath = TokenCommandPath(),

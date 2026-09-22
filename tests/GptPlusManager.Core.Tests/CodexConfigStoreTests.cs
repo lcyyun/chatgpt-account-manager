@@ -192,11 +192,10 @@ public sealed class CodexConfigStoreTests
         await store.ApplyThirdPartyAsync(MakeProvider(), catalog, null);
 
         var text = await File.ReadAllTextAsync(store.ConfigPath);
-        // Count the begin marker exactly; the end marker also contains this substring.
-        Assert.Equal(1, CountOccurrences(text, "# --- GptPlus Manager managed block ---"));
         Assert.Equal(1, CountOccurrences(text, "[model_providers.acme]"));
         Assert.Equal(1, CountOccurrences(text, "model = \"acme-large\""));
         Assert.Equal(1, CountOccurrences(text, "# gptplus-head:"));
+        Assert.Equal(1, CountOccurrences(text, "# gptplus-provider:"));
     }
 
     [Fact]
@@ -551,6 +550,62 @@ public sealed class CodexConfigStoreTests
         Assert.Null(backup);
     }
 
+    [Fact]
+    public async Task Snapshot_DetectsLegacyDangerousBlockLayout()
+    {
+        using var profile = new TemporaryDirectory();
+        var dir = Path.Combine(profile.Path, ".codex");
+        Directory.CreateDirectory(dir);
+
+        // Reproduce the real accident: the begin marker sits mid-file, the desktop app
+        // relocated the end marker to the very last line, so the whole user config looks
+        // like it is inside the managed block.
+        await File.WriteAllTextAsync(Path.Combine(dir, "config.toml"),
+            "model = \"gpt-5\"\n\n" +
+            "# --- GptPlus Manager managed block ---\n" +
+            "[model_providers.acme]\nname = \"A\"\nwire_api = \"responses\"\n\n" +
+            "[desktop]\nlocaleOverride = \"zh-CN\"\n\n" +
+            "[plugins.\"x\"]\nenabled = true\n\n" +
+            "[windows]\nsandbox = \"elevated\"\n" +
+            "# --- end GptPlus Manager managed block ---\n");
+
+        using var store = new CodexConfigStore(profile.Path);
+        var snapshot = await store.LoadAsync();
+
+        Assert.True(snapshot.HasLegacyBlockLayout);
+    }
+
+    [Fact]
+    public async Task Snapshot_LegacyLayoutNotFlaggedForWellFormedConfig()
+    {
+        using var profile = new TemporaryDirectory();
+        await SeedAsync(profile);
+        using var store = new CodexConfigStore(profile.Path);
+        await store.ApplyThirdPartyAsync(MakeProvider(), MakeCatalog(profile), null);
+
+        var snapshot = await store.LoadAsync();
+
+        // The new format writes single-line markers only, so nothing to warn about.
+        Assert.False(snapshot.HasLegacyBlockLayout);
+    }
+
+    [Fact]
+    public async Task NewFormat_WritesSingleLineMarkersOnly()
+    {
+        using var profile = new TemporaryDirectory();
+        await SeedAsync(profile);
+        using var store = new CodexConfigStore(profile.Path);
+        await store.ApplyThirdPartyAsync(MakeProvider(), MakeCatalog(profile), null);
+
+        var text = await File.ReadAllTextAsync(store.ConfigPath);
+
+        // The fragile begin/end pair must be gone: one relocated marker used to swallow
+        // the entire user config.
+        Assert.DoesNotContain("GptPlus Manager managed block", text);
+        Assert.Contains("# gptplus-provider: acme", text);
+        Assert.Contains("# gptplus-head:", text);
+    }
+
     private static int CountOccurrences(string text, string needle)
     {
         var count = 0;
@@ -573,17 +628,32 @@ public sealed class CodexConfigStoreTests
     {
         var lines = text.Replace("\r\n", "\n").Replace('\r', '\n').Split('\n').ToList();
         var kept = new List<string>();
-        var inside = false;
-        var afterEnd = false;
-        foreach (var line in lines)
+        var index = 0;
+
+        while (index < lines.Count)
         {
-            var trimmed = line.Trim();
-            if (trimmed == "# --- GptPlus Manager managed block ---") { inside = true; afterEnd = false; continue; }
-            if (trimmed == "# --- end GptPlus Manager managed block ---") { inside = false; afterEnd = true; continue; }
-            if (inside) continue;
-            if (afterEnd && trimmed.Length == 0) { afterEnd = false; continue; }
-            afterEnd = false;
-            kept.Add(line);
+            var trimmed = lines[index].Trim();
+
+            // 本应用写的单行注释（含旧版的块标记，它们现在只作为单行注释处理）。
+            if (trimmed is "# --- GptPlus Manager managed block ---"
+                         or "# --- end GptPlus Manager managed block ---"
+                || trimmed.StartsWith("# gptplus-head:", StringComparison.Ordinal)
+                || trimmed.StartsWith("# gptplus-provider:", StringComparison.Ordinal))
+            {
+                index++;
+                continue;
+            }
+
+            // 自己的 provider 表：整张跳过（表头 + 表体）。
+            if (trimmed.StartsWith("[model_providers.", StringComparison.Ordinal))
+            {
+                index++;
+                while (index < lines.Count && !lines[index].TrimStart().StartsWith('[')) index++;
+                continue;
+            }
+
+            kept.Add(lines[index]);
+            index++;
         }
 
         var limit = kept.FindIndex(l => l.TrimStart().StartsWith('['));
@@ -598,5 +668,92 @@ public sealed class CodexConfigStoreTests
             if (key is "model" or "model_provider" or "model_catalog_json") kept.RemoveAt(i);
         }
         return string.Join('\n', kept);
+    }
+
+    // ---- 回归：桌面版重写 config.toml 会搬动注释 ----
+
+    [Fact]
+    public async Task ApplyOfficial_SurvivesDesktopRelocatingTheEndMarker()
+    {
+        using var profile = new TemporaryDirectory();
+        await SeedAsync(profile);
+        var catalog = MakeCatalog(profile);
+        using var store = new CodexConfigStore(profile.Path);
+        await store.ApplyThirdPartyAsync(MakeProvider(), catalog, null);
+
+        // 复现真实事故：桌面版重写 config.toml，把悬空注释（我们的结束标记）搬到文件末尾，
+        // 于是用户整个配置都落进了 begin/end 之间。旧实现按范围删，点"切回官方"就会删光。
+        var configPath = Path.Combine(profile.Path, ".codex", "config.toml");
+        var text = await File.ReadAllTextAsync(configPath);
+        var relocated = text
+            .Replace("# --- end GptPlus Manager managed block ---", string.Empty)
+            + "\n# --- end GptPlus Manager managed block ---\n";
+        await File.WriteAllTextAsync(configPath, relocated);
+
+        await store.ApplyOfficialAsync();
+
+        var after = await File.ReadAllTextAsync(store.ConfigPath);
+        // 用户的东西必须全都还在。
+        Assert.Contains("[marketplaces.openai-bundled]", after);
+        Assert.Contains("[mcp_servers.node_repl]", after);
+        Assert.Contains("startup_timeout_sec = 120", after);
+        Assert.Contains("trust_level = \"trusted\"", after);
+        Assert.Contains("model = \"profile-only-model\"", after);
+        // 我们自己的痕迹必须清干净。
+        Assert.DoesNotContain("model_providers.acme", after);
+        Assert.DoesNotContain("gptplus-", after);
+        Assert.DoesNotContain("--provider-token", after);
+    }
+
+    [Fact]
+    public async Task ApplyOfficial_DoesNotDeleteUserTablesEvenWithMisplacedMarkers()
+    {
+        using var profile = new TemporaryDirectory();
+        var configPath = Path.Combine(profile.Path, ".codex");
+        Directory.CreateDirectory(configPath);
+        var file = Path.Combine(configPath, "config.toml");
+
+        // 极端情形：只有开始标记、没有结束标记（桌面版把结束注释整个吃掉了）。
+        // 旧实现会认为"从 begin 到文件尾都归它管"，从而删掉后面所有内容。
+        await File.WriteAllTextAsync(file,
+            "model = \"gpt-5\"\n\n# --- GptPlus Manager managed block ---\n" +
+            "[model_providers.acme]\nname = \"A\"\nbase_url = 'https://a/v1'\nwire_api = \"responses\"\n" +
+            "auth = { command = 'x.exe', args = [\"--provider-token\", \"acme\"] }\n\n" +
+            "[desktop]\nlocaleOverride = \"zh-CN\"\n\n[windows]\nsandbox = \"elevated\"\n");
+
+        using var store = new CodexConfigStore(profile.Path);
+        await store.ApplyOfficialAsync();
+
+        var after = await File.ReadAllTextAsync(file);
+        Assert.Contains("[desktop]", after);
+        Assert.Contains("localeOverride = \"zh-CN\"", after);
+        Assert.Contains("[windows]", after);
+        Assert.DoesNotContain("model_providers.acme", after);
+    }
+
+    [Fact]
+    public async Task ApplyOfficial_KeepsProvidersTheUserOwns()
+    {
+        using var profile = new TemporaryDirectory();
+        var configPath = Path.Combine(profile.Path, ".codex");
+        Directory.CreateDirectory(configPath);
+        var file = Path.Combine(configPath, "config.toml");
+
+        // 用户自己也配了 provider。它不是我们写的，切回官方时绝不能动它。
+        await File.WriteAllTextAsync(file,
+            "model = \"mine\"\nmodel_provider = \"my-own\"\n\n" +
+            "[model_providers.my-own]\nname = \"Mine\"\nbase_url = 'https://mine/v1'\nwire_api = \"responses\"\n");
+
+        using var store = new CodexConfigStore(profile.Path);
+        using (var thirdParty = new CodexConfigStore(profile.Path))
+        {
+            await thirdParty.ApplyThirdPartyAsync(MakeProvider(), MakeCatalog(profile), null);
+        }
+        await store.ApplyOfficialAsync();
+
+        var after = await File.ReadAllTextAsync(file);
+        Assert.Contains("[model_providers.my-own]", after);
+        Assert.Contains("base_url = 'https://mine/v1'", after);
+        Assert.DoesNotContain("model_providers.acme", after);
     }
 }

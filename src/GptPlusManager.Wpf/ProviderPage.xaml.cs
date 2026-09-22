@@ -94,6 +94,15 @@ public partial class ProviderPage : UserControl
                 }
             }
 
+            // 旧版危险布局：桌面版重写过 config.toml，把我们的结束标记搬到了文件末尾，
+            // 于是用户整份配置看起来都在"可删范围"内。新版本已不会误删，
+            // 但仍要提示重新应用一次把文件规整干净。
+            if (snapshot.HasLegacyBlockLayout)
+            {
+                warnings.Add("config.toml 被桌面版重写过，托管标记位置异常。" +
+                             "新版已能安全处理，但建议点一次「应用并重启 Codex」把文件规整好");
+            }
+
             ModeSummaryText.Text =
                 $"当前：{modeName}　·　模型：{snapshot.Model ?? "(官方默认)"}" +
                 (warnings.Count > 0 ? "　⚠ " + string.Join("；", warnings) : string.Empty);
