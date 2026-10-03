@@ -68,28 +68,37 @@
                         </Grid>
 
                         <Grid Grid.Row="2" Margin="0,4,0,0">
-                            <Grid.ColumnDefinitions><ColumnDefinition Width="58"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="58"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
                             <TextBlock Text="2FA" Style="{StaticResource SectionLabel}" VerticalAlignment="Center"/>
                             <Button Grid.Column="1" Command="{Binding CopySecretCommand}" Style="{StaticResource FlatFieldButton}" ToolTip="单击复制 2FA 密钥">
-                                <TextBlock Text="{Binding TwoFactorSecret}" FontFamily="Consolas" TextTrimming="CharacterEllipsis"/>
+                                <Grid>
+                                    <TextBlock Text="{Binding SecretMask}" FontFamily="Consolas" TextTrimming="CharacterEllipsis" Visibility="{Binding IsSecretVisible, Converter={StaticResource BoolToVisibility}, ConverterParameter=Invert}"/>
+                                    <TextBlock Text="{Binding TwoFactorSecret}" FontFamily="Consolas" TextTrimming="CharacterEllipsis" Visibility="{Binding IsSecretVisible, Converter={StaticResource BoolToVisibility}}"/>
+                                </Grid>
                             </Button>
+                            <CheckBox Grid.Column="2" Content="显示" IsChecked="{Binding IsSecretVisible}" Style="{StaticResource ToggleSwitch}"/>
                         </Grid>
 
                         <Grid Grid.Row="3" Margin="0,13,0,0">
                             <Grid.ColumnDefinitions><ColumnDefinition Width="180"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
-                            <Button Command="{Binding CopyCodeCommand}" Background="{DynamicResource InputBrush}" BorderBrush="{DynamicResource BorderBrush}"
-                                    BorderThickness="1" Padding="12,10" Cursor="Hand" ToolTip="单击复制当前验证码">
-                                <Button.Template>
-                                    <ControlTemplate TargetType="Button">
-                                        <Border x:Name="CodeBorder" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="1" CornerRadius="7" Padding="{TemplateBinding Padding}">
-                                            <TextBlock Text="{Binding TotpCode}" FontFamily="Consolas" FontSize="23" FontWeight="SemiBold" HorizontalAlignment="Center"/>
-                                        </Border>
-                                        <ControlTemplate.Triggers>
-                                            <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="CodeBorder" Property="BorderBrush" Value="{DynamicResource CyanBrush}"/></Trigger>
-                                        </ControlTemplate.Triggers>
-                                    </ControlTemplate>
-                                </Button.Template>
-                            </Button>
+                            <StackPanel>
+                                <Button Command="{Binding CopyCodeCommand}" Background="{DynamicResource InputBrush}" BorderBrush="{DynamicResource BorderBrush}"
+                                        BorderThickness="1" Padding="12,10" Cursor="Hand" ToolTip="单击复制当前验证码">
+                                    <Button.Template>
+                                        <ControlTemplate TargetType="Button">
+                                            <Border x:Name="CodeBorder" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="1" CornerRadius="7" Padding="{TemplateBinding Padding}">
+                                                <TextBlock Text="{Binding TotpDisplay}" FontFamily="Consolas" FontSize="23" FontWeight="SemiBold" HorizontalAlignment="Center"/>
+                                            </Border>
+                                            <ControlTemplate.Triggers>
+                                                <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="CodeBorder" Property="BorderBrush" Value="{DynamicResource CyanBrush}"/></Trigger>
+                                            </ControlTemplate.Triggers>
+                                        </ControlTemplate>
+                                    </Button.Template>
+                                </Button>
+                                <!-- 打码状态下点击复制仍然复制真实验证码；显示开关只管看得见看不见。 -->
+                                <CheckBox Content="显示" IsChecked="{Binding IsCodeVisible}" Style="{StaticResource ToggleSwitch}"
+                                          Margin="0,7,0,0" HorizontalAlignment="Center"/>
+                            </StackPanel>
                             <StackPanel Grid.Column="1" Margin="16,1,0,0" VerticalAlignment="Center">
                                 <TextBlock Text="{Binding PurchasedText}" Style="{StaticResource MutedText}"/>
                                 <TextBlock Text="{Binding Note}" Margin="0,6,0,0" ToolTip="{Binding Note}" TextTrimming="CharacterEllipsis"/>

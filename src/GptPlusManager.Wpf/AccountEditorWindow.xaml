@@ -26,10 +26,33 @@
 
                     <TextBlock Text="邮箱" Grid.Row="0" Margin="0,11,12,0" Style="{StaticResource SectionLabel}"/>
                     <TextBox x:Name="EmailBox" Grid.Row="0" Grid.Column="1" Style="{StaticResource ModernTextBox}"/>
+
+                    <!-- 密码与 2FA 密钥默认打码：编辑既有账号时这两个值会预填进输入框，
+                         明文常显等于把凭据摊在屏幕上。眼睛图标切换明文，与第三方页的密钥框同一交互。 -->
                     <TextBlock Text="密码" Grid.Row="1" Margin="0,23,12,0" Style="{StaticResource SectionLabel}"/>
-                    <TextBox x:Name="PasswordBox" Grid.Row="1" Grid.Column="1" Margin="0,12,0,0" Style="{StaticResource ModernTextBox}"/>
+                    <Grid Grid.Row="1" Grid.Column="1" Margin="0,12,0,0">
+                        <PasswordBox x:Name="PasswordBox" Style="{StaticResource ModernPasswordBox}"/>
+                        <TextBox x:Name="PasswordPlainBox" Style="{StaticResource ModernTextBox}" Padding="11,8,38,8" Visibility="Collapsed"/>
+                        <Button x:Name="PasswordEyeButton" HorizontalAlignment="Right" VerticalAlignment="Center"
+                                Width="30" Height="30" Margin="0,0,4,0" Style="{StaticResource IconButton}"
+                                AutomationProperties.Name="显示或隐藏密码"
+                                ToolTip="显示 / 隐藏密码" Click="TogglePasswordReveal_Click">
+                            <Path x:Name="PasswordEyeIcon" Data="{StaticResource IconEye}" Fill="{DynamicResource MutedBrush}" Stretch="Uniform" Width="15" Height="15"/>
+                        </Button>
+                    </Grid>
+
                     <TextBlock Text="2FA 密钥" Grid.Row="2" Margin="0,23,12,0" Style="{StaticResource SectionLabel}"/>
-                    <TextBox x:Name="SecretBox" Grid.Row="2" Grid.Column="1" Margin="0,12,0,0" Style="{StaticResource ModernTextBox}"/>
+                    <Grid Grid.Row="2" Grid.Column="1" Margin="0,12,0,0">
+                        <PasswordBox x:Name="SecretBox" Style="{StaticResource ModernPasswordBox}"/>
+                        <TextBox x:Name="SecretPlainBox" Style="{StaticResource ModernTextBox}" Padding="11,8,38,8" Visibility="Collapsed"/>
+                        <Button x:Name="SecretEyeButton" HorizontalAlignment="Right" VerticalAlignment="Center"
+                                Width="30" Height="30" Margin="0,0,4,0" Style="{StaticResource IconButton}"
+                                AutomationProperties.Name="显示或隐藏 2FA 密钥"
+                                ToolTip="显示 / 隐藏 2FA 密钥" Click="ToggleSecretReveal_Click">
+                            <Path x:Name="SecretEyeIcon" Data="{StaticResource IconEye}" Fill="{DynamicResource MutedBrush}" Stretch="Uniform" Width="15" Height="15"/>
+                        </Button>
+                    </Grid>
+
                     <TextBlock Text="购买时间" Grid.Row="3" Margin="0,23,12,0" Style="{StaticResource SectionLabel}"/>
                     <DatePicker x:Name="PurchasedPicker" Grid.Row="3" Grid.Column="1" Margin="0,12,0,0"
                                 Style="{StaticResource ModernDatePicker}" SelectedDateFormat="Short" Language="zh-CN"/>

@@ -157,6 +157,32 @@
                 </Setter>
             </Style>
 
+            <!-- 与 ModernTextBox 同视觉的密码输入框：编辑账号窗口的密码 / 2FA 密钥用。
+                 独立成样式而不是在窗口里手拼属性，两处输入框才不会长得不一样。 -->
+            <Style x:Key="ModernPasswordBox" TargetType="PasswordBox">
+                <Setter Property="Foreground" Value="{DynamicResource TextBrush}" />
+                <Setter Property="CaretBrush" Value="{DynamicResource CyanBrush}" />
+                <Setter Property="Background" Value="{DynamicResource InputBrush}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource BorderBrush}" />
+                <Setter Property="BorderThickness" Value="1" />
+                <!-- 右侧留出眼睛图标的宽度，长密码不从图标底下穿过 -->
+                <Setter Property="Padding" Value="11,8,38,8" />
+                <Setter Property="MinHeight" Value="36" />
+                <Setter Property="VerticalContentAlignment" Value="Center" />
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="PasswordBox">
+                            <Border x:Name="Bd" CornerRadius="6" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}">
+                                <ScrollViewer x:Name="PART_ContentHost" Padding="{TemplateBinding Padding}" />
+                            </Border>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="Bd" Property="BorderBrush" Value="{DynamicResource AccentBrush}" /></Trigger>
+                            </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+            </Style>
+
             <Style x:Key="CardBorder" TargetType="Border">
                 <Setter Property="Background" Value="{DynamicResource SurfaceBrush}" />
                 <Setter Property="BorderBrush" Value="{DynamicResource BorderBrush}" />

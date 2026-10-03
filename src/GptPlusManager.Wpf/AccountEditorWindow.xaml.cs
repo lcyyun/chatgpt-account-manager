@@ -1,5 +1,6 @@
 using System.IO;
 using System.Windows;
+using GptPlusManager.Core.Codex;
 using GptPlusManager.Wpf.Infrastructure;
 using GptPlusManager.Wpf.Services;
 
@@ -7,6 +8,10 @@ namespace GptPlusManager.Wpf;
 
 /// <summary>
 /// 单个账号编辑器。编辑模式只保存既有账号；添加模式在弹窗内分「手动添加 / 批量导入」两页。
+///
+/// <para>密码与 2FA 密钥默认打码（PasswordBox + 眼睛图标）。两对输入框互为镜像但<b>不做</b>
+/// 持续同步：值只在切换可见性的一瞬间从可见框搬运到隐藏框，保存/清空也只认可见框——
+/// 持续同步会让两个 Changed 事件互相触发（第三方页为此踩过坑），而这里根本不需要。</para>
 /// </summary>
 public partial class AccountEditorWindow : Window
 {
@@ -14,6 +19,8 @@ public partial class AccountEditorWindow : Window
     private readonly IUiService? _ui;
     private readonly bool _isAddMode;
     private bool _committed;
+    private bool _passwordRevealed;
+    private bool _secretRevealed;
 
     private AccountEditorWindow(AccountEditRequest? existing, IAccountManagerService? service, IUiService? ui)
     {
@@ -35,8 +42,8 @@ public partial class AccountEditorWindow : Window
         {
             EditButtons.Visibility = Visibility.Visible;
             EmailBox.Text = existing!.Email;
-            PasswordBox.Text = existing.Password;
-            SecretBox.Text = existing.TwoFactorSecret;
+            SetPassword(existing.Password);
+            SetSecret(existing.TwoFactorSecret);
             PurchasedPicker.SelectedDate = existing.PurchasedAt?.LocalDateTime;
             NoteBox.Text = existing.Note;
         }
@@ -158,7 +165,9 @@ public partial class AccountEditorWindow : Window
             EmailBox.Focus();
             return false;
         }
-        request = new AccountEditRequest(EmailBox.Text.Trim(), PasswordBox.Text, SecretBox.Text.Trim(),
+        // 只读可见框：打码时读 PasswordBox，显示时读明文框。隐藏框的值在切换瞬间
+        // 已被搬运，任何时刻两框里至多一个是"当前值"，且它一定在可见框里。
+        request = new AccountEditRequest(EmailBox.Text.Trim(), PasswordInput.Trim(), SecretInput.Trim(),
             PurchasedPicker.SelectedDate.HasValue ? new DateTimeOffset(PurchasedPicker.SelectedDate.Value) : null,
             NoteBox.Text);
         return true;
@@ -167,10 +176,58 @@ public partial class AccountEditorWindow : Window
     private void ClearForm()
     {
         EmailBox.Text = string.Empty;
-        PasswordBox.Text = string.Empty;
-        SecretBox.Text = string.Empty;
+        SetPassword(string.Empty);
+        SetSecret(string.Empty);
         PurchasedPicker.SelectedDate = null;
         NoteBox.Text = string.Empty;
+    }
+
+    // ---------- 密码 / 2FA 密钥的打码输入 ----------
+
+    private string PasswordInput => _passwordRevealed ? PasswordPlainBox.Text : PasswordBox.Password;
+    private string SecretInput => _secretRevealed ? SecretPlainBox.Text : SecretBox.Password;
+
+    private void SetPassword(string value)
+    {
+        // 只写值，不动可见性：预填与清空都发生在打码状态下，
+        // 是否显示明文完全由眼睛图标决定。
+        PasswordBox.Password = value;
+        PasswordPlainBox.Text = value;
+    }
+
+    private void SetSecret(string value)
+    {
+        SecretBox.Password = value;
+        SecretPlainBox.Text = value;
+    }
+
+    private void TogglePasswordReveal_Click(object sender, RoutedEventArgs e) =>
+        ApplyPasswordReveal(!_passwordRevealed);
+
+    private void ToggleSecretReveal_Click(object sender, RoutedEventArgs e) =>
+        ApplySecretReveal(!_secretRevealed);
+
+    private void ApplyPasswordReveal(bool revealed)
+    {
+        // 取值方向由 RevealToggle 决定（它被测试固定）：看切换前谁可见，谁才持有当前值。
+        var value = RevealToggle.Resolve(_passwordRevealed, PasswordBox.Password, PasswordPlainBox.Text);
+        _passwordRevealed = revealed;
+        PasswordBox.Password = value;
+        PasswordPlainBox.Text = value;
+        PasswordBox.Visibility = revealed ? Visibility.Collapsed : Visibility.Visible;
+        PasswordPlainBox.Visibility = revealed ? Visibility.Visible : Visibility.Collapsed;
+        PasswordEyeIcon.Data = (System.Windows.Media.Geometry)FindResource(revealed ? "IconEyeOff" : "IconEye");
+    }
+
+    private void ApplySecretReveal(bool revealed)
+    {
+        var value = RevealToggle.Resolve(_secretRevealed, SecretBox.Password, SecretPlainBox.Text);
+        _secretRevealed = revealed;
+        SecretBox.Password = value;
+        SecretPlainBox.Text = value;
+        SecretBox.Visibility = revealed ? Visibility.Collapsed : Visibility.Visible;
+        SecretPlainBox.Visibility = revealed ? Visibility.Visible : Visibility.Collapsed;
+        SecretEyeIcon.Data = (System.Windows.Media.Geometry)FindResource(revealed ? "IconEyeOff" : "IconEye");
     }
 
     private void SetStatus(string message, bool isError)

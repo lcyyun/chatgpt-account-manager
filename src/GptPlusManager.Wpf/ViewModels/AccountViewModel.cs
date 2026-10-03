@@ -66,6 +66,8 @@ public sealed partial class AccountViewModel : ObservableObject
     [ObservableProperty] private DateTimeOffset? _secondaryResetsAt;
     [ObservableProperty] private int _resetCreditsAvailable;
     [ObservableProperty] private bool _isPasswordVisible;
+    [ObservableProperty] private bool _isSecretVisible;
+    [ObservableProperty] private bool _isCodeVisible;
     [ObservableProperty] private bool _isBusy;
     [ObservableProperty] private bool _isCodeCopied;
     [ObservableProperty] private bool _isAuthorizing;
@@ -78,6 +80,15 @@ public sealed partial class AccountViewModel : ObservableObject
     [ObservableProperty] private string _secondaryResetText = string.Empty;
 
     public string PasswordMask => new('•', Math.Clamp(Password.Length, 8, 14));
+
+    /// <summary>
+    /// 2FA 密钥的打码形态。密钥与验证码默认都隐藏——这两样比密码更致命：
+    /// 拿到密钥就能永久生成验证码，等于账号的第二把钥匙一直挂在明面上。
+    /// </summary>
+    public string SecretMask => new('•', Math.Clamp(TwoFactorSecret.Length, 8, 14));
+
+    /// <summary>验证码显示值：隐藏时用 6 个圆点占位，保持与 6 位数字相同的视觉宽度。</summary>
+    public string TotpDisplay => IsCodeVisible ? TotpCode : "••••••";
     public string PurchasedText => PurchasedAt.HasValue ? $"购买于 {PurchasedAt:yyyy-MM-dd}" : "购买时间未记录";
     public string SubscriptionText => SubscriptionUntil.HasValue ? $"订阅至 {SubscriptionUntil:yyyy-MM-dd}" : "订阅时间未知";
     public string AuthorizationText => IsInvalid ? "账号无效" : IsAuthorized ? "授权有效" : "尚未授权";
@@ -103,6 +114,9 @@ public sealed partial class AccountViewModel : ObservableObject
     public IAsyncRelayCommand CopyCodeCommand { get; }
 
     partial void OnPasswordChanged(string value) => OnPropertyChanged(nameof(PasswordMask));
+    partial void OnTwoFactorSecretChanged(string value) => OnPropertyChanged(nameof(SecretMask));
+    partial void OnTotpCodeChanged(string value) => OnPropertyChanged(nameof(TotpDisplay));
+    partial void OnIsCodeVisibleChanged(bool value) => OnPropertyChanged(nameof(TotpDisplay));
     partial void OnIsInvalidChanged(bool value) { OnPropertyChanged(nameof(AuthorizationText)); OnPropertyChanged(nameof(InvalidButtonText)); }
     partial void OnIsAuthorizedChanged(bool value) => OnPropertyChanged(nameof(AuthorizationText));
     partial void OnResetCreditsAvailableChanged(int value) { OnPropertyChanged(nameof(ResetCreditText)); ConsumeResetCommand.NotifyCanExecuteChanged(); }
