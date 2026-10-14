@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="src/GptPlusManager.Wpf/Assets/app-icon.png" width="96" height="96" alt="GptPlus Manager icon">
+</p>
+
 # GptPlus Manager
 
 本地优先的 ChatGPT / Codex 多账号管理工具。Windows 桌面应用，使用 **WPF + .NET 10**。

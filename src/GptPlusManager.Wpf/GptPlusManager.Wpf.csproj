@@ -8,6 +8,13 @@
     <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.2" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- 应用图标：exe 图标 + 窗口标题栏 / 任务栏图标（窗口未显式设置 Icon 时
+         继承 exe 图标，系统按显示尺寸挑 ICO 里最佳帧） -->
+    <Resource Include="Assets\app.ico" />
+    <None Include="Assets\app-icon.png" />
+  </ItemGroup>
+
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
     <TargetFramework>net10.0-windows</TargetFramework>
@@ -15,7 +22,8 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <UseWPF>true</UseWPF>
 
-    <Version>0.6.2</Version>
+    <ApplicationIcon>Assets\app.ico</ApplicationIcon>
+    <Version>0.6.3</Version>
     <AssemblyName>ChatGptAccountManager</AssemblyName>
     <RootNamespace>GptPlusManager.Wpf</RootNamespace>
     <Product>ChatGPT Account Manager</Product>
