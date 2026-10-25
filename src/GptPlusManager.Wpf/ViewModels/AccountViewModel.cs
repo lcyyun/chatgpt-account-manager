@@ -1,5 +1,6 @@
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using GptPlusManager.Core.Services;
 using GptPlusManager.Wpf.Infrastructure;
 using GptPlusManager.Wpf.Services;
 
@@ -18,15 +19,19 @@ public sealed partial class AccountViewModel : ObservableObject
     /// <summary>账号有效性变化。需要把卡片移入对应的有效 / 无效分组。</summary>
     private readonly Action<AccountViewModel> _validityChanged;
 
+    /// <summary>套餐变化（查用量后升级 / 过期）。默认排序是订阅优先，所以要触发重排。</summary>
+    private readonly Action<AccountViewModel> _planChanged;
+
     private readonly Action<string, bool> _toast;
     private IAccountAuthorizationSession? _authorizationSession;
 
     public AccountViewModel(AccountSnapshot s, IAccountManagerService service, IUiService ui,
         Func<AccountViewModel, Task> editRequested, Func<AccountViewModel, Task> deleteRequested,
-        Action<AccountViewModel> stateChanged, Action<AccountViewModel> validityChanged, Action<string, bool> toast)
+        Action<AccountViewModel> stateChanged, Action<AccountViewModel> validityChanged,
+        Action<AccountViewModel> planChanged, Action<string, bool> toast)
     {
         _service = service; _ui = ui; _editRequested = editRequested; _deleteRequested = deleteRequested;
-        _stateChanged = stateChanged; _validityChanged = validityChanged; _toast = toast; Id = s.Id;
+        _stateChanged = stateChanged; _validityChanged = validityChanged; _planChanged = planChanged; _toast = toast; Id = s.Id;
         AuthorizeCommand = new AsyncRelayCommand(StartAuthorizationAsync, () => !IsBusy && !IsAuthorizing);
         ReopenAuthorizationCommand = new RelayCommand(ReopenAuthorization, () => IsAuthorizing);
         CopyAuthorizationUrlCommand = new RelayCommand(CopyAuthorizationUrl, () => IsAuthorizing);
@@ -89,7 +94,13 @@ public sealed partial class AccountViewModel : ObservableObject
 
     /// <summary>验证码显示值：隐藏时用 6 个圆点占位，保持与 6 位数字相同的视觉宽度。</summary>
     public string TotpDisplay => IsCodeVisible ? TotpCode : "••••••";
-    public string PurchasedText => PurchasedAt.HasValue ? $"购买于 {PurchasedAt:yyyy-MM-dd}" : "购买时间未记录";
+
+    /// <summary>
+    /// 默认排序键（订阅优先、无效沉底），由 <see cref="AccountOrdering.PlanSortKey"/> 统一判定。
+    /// 套餐在查用量后变化时通知宿主重排。
+    /// </summary>
+    public int PlanSortKey => AccountOrdering.PlanSortKey(IsInvalid, PlanName);
+
     public string SubscriptionText => SubscriptionUntil.HasValue ? $"订阅至 {SubscriptionUntil:yyyy-MM-dd}" : "订阅时间未知";
     public string AuthorizationText => IsInvalid ? "账号无效" : IsAuthorized ? "授权有效" : "尚未授权";
     public string InvalidButtonText => IsInvalid ? "恢复有效" : "标记无效";
@@ -118,11 +129,12 @@ public sealed partial class AccountViewModel : ObservableObject
     partial void OnTotpCodeChanged(string value) => OnPropertyChanged(nameof(TotpDisplay));
     partial void OnIsCodeVisibleChanged(bool value) => OnPropertyChanged(nameof(TotpDisplay));
     partial void OnIsInvalidChanged(bool value) { OnPropertyChanged(nameof(AuthorizationText)); OnPropertyChanged(nameof(InvalidButtonText)); }
+    // 套餐变化意味着默认排序档位可能变了（升级成订阅 / 过期降为 free），通知宿主重排。
+    partial void OnPlanNameChanged(string value) => _planChanged?.Invoke(this);
     partial void OnIsAuthorizedChanged(bool value) => OnPropertyChanged(nameof(AuthorizationText));
     partial void OnResetCreditsAvailableChanged(int value) { OnPropertyChanged(nameof(ResetCreditText)); ConsumeResetCommand.NotifyCanExecuteChanged(); }
     partial void OnPrimaryUsagePercentChanged(double value) => OnPropertyChanged(nameof(PrimaryRemaining));
     partial void OnSecondaryUsagePercentChanged(double value) => OnPropertyChanged(nameof(SecondaryRemaining));
-    partial void OnPurchasedAtChanged(DateTimeOffset? value) => OnPropertyChanged(nameof(PurchasedText));
     partial void OnSubscriptionUntilChanged(DateTimeOffset? value) => OnPropertyChanged(nameof(SubscriptionText));
     partial void OnIsAuthorizingChanged(bool value)
     {

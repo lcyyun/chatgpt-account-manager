@@ -22,6 +22,12 @@ public partial class AccountEditorWindow : Window
     private bool _passwordRevealed;
     private bool _secretRevealed;
 
+    /// <summary>
+    /// 编辑对象原有的购买时间。表单已不再提供该字段（手填日期不承载任何决策，
+    /// 有意义的订阅信息由查用量自动刷新），但存量数据在保存时原样带回，不静默清空。
+    /// </summary>
+    private DateTimeOffset? _existingPurchasedAt;
+
     private AccountEditorWindow(AccountEditRequest? existing, IAccountManagerService? service, IUiService? ui)
     {
         InitializeComponent();
@@ -44,7 +50,7 @@ public partial class AccountEditorWindow : Window
             EmailBox.Text = existing!.Email;
             SetPassword(existing.Password);
             SetSecret(existing.TwoFactorSecret);
-            PurchasedPicker.SelectedDate = existing.PurchasedAt?.LocalDateTime;
+            _existingPurchasedAt = existing.PurchasedAt;
             NoteBox.Text = existing.Note;
         }
     }
@@ -168,8 +174,7 @@ public partial class AccountEditorWindow : Window
         // 只读可见框：打码时读 PasswordBox，显示时读明文框。隐藏框的值在切换瞬间
         // 已被搬运，任何时刻两框里至多一个是"当前值"，且它一定在可见框里。
         request = new AccountEditRequest(EmailBox.Text.Trim(), PasswordInput.Trim(), SecretInput.Trim(),
-            PurchasedPicker.SelectedDate.HasValue ? new DateTimeOffset(PurchasedPicker.SelectedDate.Value) : null,
-            NoteBox.Text);
+            _existingPurchasedAt, NoteBox.Text);
         return true;
     }
 
@@ -178,7 +183,6 @@ public partial class AccountEditorWindow : Window
         EmailBox.Text = string.Empty;
         SetPassword(string.Empty);
         SetSecret(string.Empty);
-        PurchasedPicker.SelectedDate = null;
         NoteBox.Text = string.Empty;
     }
 

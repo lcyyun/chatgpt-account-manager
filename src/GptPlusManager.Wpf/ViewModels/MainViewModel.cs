@@ -49,6 +49,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     public ICollectionView AccountsView { get; }
 
     [ObservableProperty] private string _searchText = string.Empty;
+    [ObservableProperty] private string _selectedPlanFilter = PlanFilterAll;
     [ObservableProperty] private bool _isBusy;
     [ObservableProperty] private bool _isSavingOrder;
     [ObservableProperty] private bool _isKeepAliveEnabled = true;
@@ -60,10 +61,24 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     [ObservableProperty] private bool _isToastError;
     [ObservableProperty] private string _toastMessage = string.Empty;
 
-    public bool CanReorder => string.IsNullOrWhiteSpace(SearchText) && !IsBusy && !IsSavingOrder;
+    public bool CanReorder => string.IsNullOrWhiteSpace(SearchText) && SelectedPlanFilter == PlanFilterAll && !IsBusy && !IsSavingOrder;
     public int VisibleAccountCount => AccountsView.Cast<object>().Count();
     public int InvalidAccountCount => Accounts.Count(x => x.IsInvalid);
     public string KeepAliveText => IsKeepAliveEnabled ? "保活：开" : "保活：关";
+
+    public const string PlanFilterAll = "全部";
+    public const string PlanFilterUnknown = "未知";
+
+    /// <summary>套餐筛选的可选项。匹配规则：包含（忽略大小写）；「未知」= 套餐名为空（从未查过用量）。</summary>
+    public IReadOnlyList<string> PlanFilterOptions { get; } = [PlanFilterAll, "Plus", "Pro", "Free", PlanFilterUnknown];
+
+    partial void OnSelectedPlanFilterChanged(string value)
+    {
+        // 筛选与搜索一样，都会让可见集合与持久化顺序脱节，拖拽必须禁用。
+        AccountsView.Refresh();
+        NotifyCounts();
+        OnPropertyChanged(nameof(CanReorder));
+    }
 
     /// <summary>
     /// 工具栏「应用并重启 Codex」按钮的文案。按当前实际模式变化：
@@ -107,7 +122,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     public IAsyncRelayCommand ToggleKeepAliveCommand { get; }
     public IRelayCommand ToggleThemeCommand { get; }
 
-    partial void OnSearchTextChanged(string value) { AccountsView.Refresh(); NotifyCounts(); }
+    partial void OnSearchTextChanged(string value) { AccountsView.Refresh(); NotifyCounts(); OnPropertyChanged(nameof(CanReorder)); }
     partial void OnIsBusyChanged(bool value)
     {
         InitializeCommand.NotifyCanExecuteChanged();
@@ -189,7 +204,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         {
             Accounts.Clear();
             foreach (var snapshot in await _service.LoadAccountsAsync(ct)) Accounts.Add(CreateAccount(snapshot));
-            NormalizeValidityGroups();
+            ApplyDefaultOrdering();
             IsKeepAliveEnabled = await _service.GetKeepAliveAsync(ct);
             OnClockTick(this, EventArgs.Empty); NotifyCounts();
             StatusText = $"{Accounts.Count} 个账号 · 数据已从现有目录加载";
@@ -203,7 +218,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     {
         Accounts.Clear();
         foreach (var snapshot in await _service.LoadAccountsAsync(cancellationToken)) Accounts.Add(CreateAccount(snapshot));
-        NormalizeValidityGroups();
+        ApplyDefaultOrdering();
         OnClockTick(this, EventArgs.Empty);
         NotifyCounts();
         QueryAllCommand.NotifyCanExecuteChanged();
@@ -271,7 +286,8 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     }
 
     private AccountViewModel CreateAccount(AccountSnapshot snapshot) =>
-        new(snapshot, _service, _ui, EditAccountAsync, DeleteAccountAsync, OnAccountStateChanged, OnAccountValidityChanged, ShowToast);
+        new(snapshot, _service, _ui, EditAccountAsync, DeleteAccountAsync, OnAccountStateChanged,
+            OnAccountValidityChanged, OnAccountPlanChanged, ShowToast);
 
     /// <summary>仅刷新显示状态（Codex 标记、授权状态等），不改变账号顺序。</summary>
     private void OnAccountStateChanged(AccountViewModel changed)
@@ -286,28 +302,51 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     private async void OnAccountValidityChanged(AccountViewModel changed)
     {
         OnAccountStateChanged(changed);
-
-        var before = CaptureOrder();
-        var current = Accounts.IndexOf(changed);
-        if (current >= 0)
-        {
-            Accounts.RemoveAt(current);
-            var destination = changed.IsInvalid ? Accounts.Count : Accounts.Count(x => !x.IsInvalid);
-            Accounts.Insert(destination, changed);
-        }
+        await ApplyDefaultOrderingAsync(commit: true);
         NotifyCounts();
-        if (!before.SequenceEqual(Accounts)) await CommitOrderAsync(before);
     }
 
-    private void NormalizeValidityGroups()
+    /// <summary>
+    /// 套餐变化（查用量后）时的默认重排。不落盘：持久化的顺序只承担
+    /// "同一档内的手动排序"，档位本身每次加载都会重新推导。
+    /// </summary>
+    private void OnAccountPlanChanged(AccountViewModel changed) => ApplyDefaultOrdering();
+
+    /// <summary>
+    /// 默认排序：订阅优先、无效沉底；同一档内保持用户手动排的顺序。
+    /// </summary>
+    private async Task ApplyDefaultOrderingAsync(bool commit)
     {
-        var ordered = AccountOrdering.StableValidityGroups(Accounts, x => x.IsInvalid);
-        RestoreOrder(ordered);
+        var before = CaptureOrder();
+        ApplyDefaultOrdering();
+        NotifyCounts();
+        if (commit && !before.SequenceEqual(Accounts)) await CommitOrderAsync(before);
     }
-    private bool FilterAccount(object item) => item is not AccountViewModel a || string.IsNullOrWhiteSpace(SearchText)
-        || a.Email.Contains(SearchText, StringComparison.OrdinalIgnoreCase)
-        || a.Note.Contains(SearchText, StringComparison.OrdinalIgnoreCase)
-        || a.PlanName.Contains(SearchText, StringComparison.OrdinalIgnoreCase);
+
+    private void ApplyDefaultOrdering() =>
+        RestoreOrder(AccountOrdering.StableOrdered(Accounts, a => a.PlanSortKey));
+
+    private bool FilterAccount(object item)
+    {
+        if (item is not AccountViewModel a) return false;
+
+        // 套餐筛选：null/空 = 套餐未知（从未查过用量的账号）
+        if (SelectedPlanFilter != PlanFilterAll)
+        {
+            var plan = a.PlanName;
+            var matches = string.IsNullOrEmpty(plan)
+                ? SelectedPlanFilter == PlanFilterUnknown
+                : SelectedPlanFilter == PlanFilterUnknown
+                    ? false
+                    : plan.Contains(SelectedPlanFilter, StringComparison.OrdinalIgnoreCase);
+            if (!matches) return false;
+        }
+
+        return string.IsNullOrWhiteSpace(SearchText)
+            || a.Email.Contains(SearchText, StringComparison.OrdinalIgnoreCase)
+            || a.Note.Contains(SearchText, StringComparison.OrdinalIgnoreCase)
+            || a.PlanName.Contains(SearchText, StringComparison.OrdinalIgnoreCase);
+    }
 
     private void OnClockTick(object? sender, EventArgs e)
     {

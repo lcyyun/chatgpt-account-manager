@@ -100,7 +100,7 @@
                                           Margin="0,7,0,0" HorizontalAlignment="Center"/>
                             </StackPanel>
                             <StackPanel Grid.Column="1" Margin="16,1,0,0" VerticalAlignment="Center">
-                                <TextBlock Text="{Binding PurchasedText}" Style="{StaticResource MutedText}"/>
+                                <TextBlock Text="{Binding SubscriptionText}" Style="{StaticResource MutedText}"/>
                                 <TextBlock Text="{Binding Note}" Margin="0,6,0,0" ToolTip="{Binding Note}" TextTrimming="CharacterEllipsis"/>
                             </StackPanel>
                         </Grid>
@@ -108,7 +108,6 @@
                         <StackPanel Grid.Row="4" Margin="0,16,0,0">
                             <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
                                 <Border Style="{StaticResource Chip}"><TextBlock Text="{Binding PlanName, TargetNullValue=套餐未知}" Foreground="{DynamicResource AccentBrush}"/></Border>
-                                <Border Style="{StaticResource Chip}"><TextBlock Text="{Binding SubscriptionText}" Foreground="{DynamicResource MutedBrush}"/></Border>
                                 <Border Style="{StaticResource Chip}"><TextBlock Text="{Binding ResetCreditText}" Foreground="{DynamicResource AmberBrush}"/></Border>
                             </StackPanel>
                             <StackPanel Visibility="{Binding HasPrimaryUsage, Converter={StaticResource BoolToVisibility}}">
@@ -244,6 +243,14 @@
                         <TextBox Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}" Style="{StaticResource ModernTextBox}" Padding="36,8,10,8" ToolTip="搜索邮箱、备注或套餐"/>
                         <Viewbox Width="16" Height="16" HorizontalAlignment="Left" Margin="12,0,0,0" IsHitTestVisible="False"><Path Data="{StaticResource IconSearch}" Fill="{DynamicResource MutedBrush}"/></Viewbox>
                     </Grid>
+                    <!-- 套餐筛选：配合默认排序（订阅优先），一眼只看某一档 -->
+                    <ComboBox x:Name="PlanFilterBox" Width="104" Margin="8,0,0,0" MinHeight="36"
+                              ItemsSource="{Binding PlanFilterOptions}"
+                              SelectedItem="{Binding SelectedPlanFilter, UpdateSourceTrigger=PropertyChanged}"
+                              Background="{DynamicResource InputBrush}" Foreground="{DynamicResource TextBrush}"
+                              BorderBrush="{DynamicResource BorderBrush}" VerticalContentAlignment="Center"
+                              AutomationProperties.Name="按套餐筛选" AutomationProperties.AutomationId="PlanFilterBox"
+                              ToolTip="按套餐筛选；「未知」= 从未查过用量的账号"/>
                 </StackPanel>
             </Grid>
         </Border>

@@ -16,11 +16,13 @@
             </StackPanel>
 
             <Grid Margin="0,18,0,0">
-                <!-- 手动填写页（编辑模式也使用同一个表单） -->
+                <!-- 手动填写页（编辑模式也使用同一个表单）。
+                     没有「购买时间」：它是纯手填数据，而有意义的订阅信息（套餐 / 到期）
+                     由查用量自动刷新，排序也以它为准，手填购买日期没有承载任何决策。 -->
                 <Grid x:Name="FormPage">
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/>
-                        <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
                     </Grid.RowDefinitions>
                     <Grid.ColumnDefinitions><ColumnDefinition Width="86"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
 
@@ -53,11 +55,8 @@
                         </Button>
                     </Grid>
 
-                    <TextBlock Text="购买时间" Grid.Row="3" Margin="0,23,12,0" Style="{StaticResource SectionLabel}"/>
-                    <DatePicker x:Name="PurchasedPicker" Grid.Row="3" Grid.Column="1" Margin="0,12,0,0"
-                                Style="{StaticResource ModernDatePicker}" SelectedDateFormat="Short" Language="zh-CN"/>
-                    <TextBlock Text="备注" Grid.Row="4" Margin="0,23,12,0" Style="{StaticResource SectionLabel}"/>
-                    <TextBox x:Name="NoteBox" Grid.Row="4" Grid.Column="1" Margin="0,12,0,0" Style="{StaticResource ModernTextBox}"/>
+                    <TextBlock Text="备注" Grid.Row="3" Margin="0,23,12,0" Style="{StaticResource SectionLabel}"/>
+                    <TextBox x:Name="NoteBox" Grid.Row="3" Grid.Column="1" Margin="0,12,0,0" Style="{StaticResource ModernTextBox}"/>
                 </Grid>
 
                 <!-- 批量导入页 -->
