@@ -30,7 +30,6 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         InitializeCommand = new AsyncRelayCommand(InitializeAsync, () => !IsBusy);
         AddAccountCommand = new RelayCommand(AddAccount, () => !IsBusy);
         ExportCommand = new RelayCommand(() => ExportWindow.ShowDialog(_service, _ui), () => !IsBusy);
-        SaveProviderCommand = new AsyncRelayCommand(SaveProviderAsync, () => !IsBusy);
         PreviewProviderCommand = new AsyncRelayCommand(PreviewProviderAsync, () => !IsBusy);
         RestoreConfigCommand = new AsyncRelayCommand(RestoreConfigAsync, () => !IsBusy);
         ApplyProviderCommand = new AsyncRelayCommand(ApplyProviderAsync, () => !IsBusy);
@@ -109,7 +108,6 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     /// 「第三方」页面的动作。页面本身是 ProviderPage（有状态、含输入框），
     /// 由 MainWindow 在创建时注入；ViewModel 只负责把工具栏按钮连过去。
     /// </summary>
-    public IAsyncRelayCommand SaveProviderCommand { get; }
     public IAsyncRelayCommand PreviewProviderCommand { get; }
     public IAsyncRelayCommand RestoreConfigCommand { get; }
     public IAsyncRelayCommand ApplyProviderCommand { get; }
@@ -127,7 +125,6 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     {
         InitializeCommand.NotifyCanExecuteChanged();
         ExportCommand.NotifyCanExecuteChanged();
-        SaveProviderCommand.NotifyCanExecuteChanged();
         PreviewProviderCommand.NotifyCanExecuteChanged();
         RestoreConfigCommand.NotifyCanExecuteChanged();
         ApplyProviderCommand.NotifyCanExecuteChanged();
@@ -371,15 +368,6 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     private void NotifyCounts()
     {
         OnPropertyChanged(nameof(CanReorder)); OnPropertyChanged(nameof(VisibleAccountCount)); OnPropertyChanged(nameof(InvalidAccountCount));
-    }
-
-    private async Task SaveProviderAsync()
-    {
-        if (ProviderPage is null) return;
-        await RunGlobalAsync(async _ =>
-        {
-            if (await ProviderPage.SaveAsync()) ShowToast("供应商已保存", false);
-        }, null);
     }
 
     private async Task PreviewProviderAsync()

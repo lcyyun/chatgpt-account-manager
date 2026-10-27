@@ -81,32 +81,54 @@ public partial class AccountEditorWindow : Window
         ImportButtons.Visibility = showImport ? Visibility.Visible : Visibility.Collapsed;
         ManualButtons.Visibility = showImport ? Visibility.Collapsed : Visibility.Visible;
         // 隐藏那一页不应再响应回车默认动作。
-        SaveAndAddButton.IsDefault = !showImport;
+        SaveCloseButton.IsDefault = !showImport;
         if (!showImport) EmailBox.Focus();
     }
 
-    private void Save_Click(object sender, RoutedEventArgs e)
+    /// <summary>
+    /// 保存：编辑模式改完关闭；添加模式<b>存下再关闭</b>。
+    ///
+    /// <para>添加模式这里曾是个坑：只把 Result 赋值后关窗，而添加流程读的是
+    /// <see cref="_committed"/>（只有「保存并添加」写它）——点「保存」整个窗口
+    /// 假装成功关闭，输入却什么都没存。所以现在添加模式走真正的落盘。</para>
+    /// </summary>
+    private async void Save_Click(object sender, RoutedEventArgs e)
     {
         if (!TryReadForm(out var request)) return;
-        Result = request;
-        DialogResult = true;
+        if (!_isAddMode)
+        {
+            Result = request;
+            DialogResult = true;
+            return;
+        }
+
+        if (await AddAccountAsync(request)) DialogResult = true;
     }
 
+    /// <summary>保存并继续录入：存下后清空表单，窗口留着录下一个。</summary>
     private async void SaveAndAdd_Click(object sender, RoutedEventArgs e)
     {
         if (!TryReadForm(out var request)) return;
+        if (await AddAccountAsync(request))
+        {
+            ClearForm();
+            SetStatus("已添加，可继续录入下一个。", false);
+        }
+    }
 
+    private async Task<bool> AddAccountAsync(AccountEditRequest request)
+    {
         ManualButtons.IsEnabled = false;
         try
         {
-            var created = await _service!.AddAccountAsync(request);
+            await _service!.AddAccountAsync(request);
             _committed = true;
-            ClearForm();
-            SetStatus($"已添加 {created.Email}，可继续录入下一个。", false);
+            return true;
         }
         catch (Exception ex)
         {
             SetStatus("添加失败：" + ex.Message, true);
+            return false;
         }
         finally { ManualButtons.IsEnabled = true; }
     }

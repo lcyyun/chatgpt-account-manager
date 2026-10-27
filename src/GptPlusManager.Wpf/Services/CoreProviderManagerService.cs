@@ -201,16 +201,8 @@ public sealed class CoreProviderManagerService : IProviderManagerService
         return backup;
     }
 
-    public async Task<string> PreviewAsync(string? providerId, CancellationToken cancellationToken = default)
+    public async Task<string> PreviewAsync(ProviderDefinition? provider, CancellationToken cancellationToken = default)
     {
-        if (string.IsNullOrWhiteSpace(providerId))
-        {
-            return await _config.PreviewOfficialAsync(cancellationToken).ConfigureAwait(false);
-        }
-
-        var providers = await _registry.LoadAsync(cancellationToken).ConfigureAwait(false);
-        var provider = providers.FirstOrDefault(p =>
-            string.Equals(p.Id, providerId, StringComparison.OrdinalIgnoreCase));
         if (provider is null || provider.Models.Count == 0)
         {
             return await _config.PreviewOfficialAsync(cancellationToken).ConfigureAwait(false);

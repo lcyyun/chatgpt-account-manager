@@ -64,8 +64,11 @@ public interface IProviderManagerService : IDisposable
     /// <summary>回到官方模式。返回备份文件路径（无改动时为 null）。</summary>
     Task<string?> ApplyOfficialAsync(CancellationToken cancellationToken = default);
 
-    /// <summary>预览将要写入 config.toml 的内容，不落盘。</summary>
-    Task<string> PreviewAsync(string? providerId, CancellationToken cancellationToken = default);
+    /// <summary>
+    /// 预览将要写入 config.toml 的内容，不落盘。直接按传入的供应商定义预览
+    /// （即屏幕上当前的编辑），不查磁盘——保存已并入应用动作，没有"旧的已保存状态"可回退。
+    /// </summary>
+    Task<string> PreviewAsync(ProviderDefinition? provider, CancellationToken cancellationToken = default);
 
     /// <summary>最近一次自动备份的路径，供一键还原。</summary>
     string? FindLatestBackup();

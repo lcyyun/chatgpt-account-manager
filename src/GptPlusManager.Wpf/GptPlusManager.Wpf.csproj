@@ -23,7 +23,7 @@
     <UseWPF>true</UseWPF>
 
     <ApplicationIcon>Assets\app.ico</ApplicationIcon>
-    <Version>0.7.0</Version>
+    <Version>0.7.1</Version>
     <AssemblyName>ChatGptAccountManager</AssemblyName>
     <RootNamespace>GptPlusManager.Wpf</RootNamespace>
     <Product>ChatGPT Account Manager</Product>

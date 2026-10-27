@@ -414,7 +414,7 @@ public partial class ProviderPage : UserControl
         };
         _providers.Add(provider);
         RefreshProviderList(provider.Id);
-        StatusText.Text = "已新增。填好详情后点上方「保存供应商」。";
+        StatusText.Text = "已新增。改动会在下次「应用并重启 Codex」时自动保存并生效。";
         ProviderIdBox.Focus();
         ProviderIdBox.SelectAll();
     }
@@ -546,7 +546,7 @@ public partial class ProviderPage : UserControl
 
         provider.Models.Add(edited);
         RenderModels(provider);
-        StatusText.Text = $"已添加模型 {edited.Slug}。记得点上方「保存供应商」。";
+        StatusText.Text = $"已添加模型 {edited.Slug}。改动会在下次「应用并重启 Codex」时自动保存并生效。";
     }
 
     private void EditModel_Click(object sender, RoutedEventArgs e)
@@ -564,7 +564,7 @@ public partial class ProviderPage : UserControl
         row.Model.Protocol = edited.Protocol;
         row.Refresh();
         SyncModelsFromRows();
-        StatusText.Text = "模型已修改。记得点上方「保存供应商」。";
+        StatusText.Text = "模型已修改。改动会在下次「应用并重启 Codex」时自动保存并生效。";
     }
 
     private void RemoveModel_Click(object sender, RoutedEventArgs e)
@@ -574,7 +574,7 @@ public partial class ProviderPage : UserControl
 
         provider.Models.Remove(row.Model);
         RenderModels(provider);
-        StatusText.Text = $"已移除模型 {row.Slug}。记得点上方「保存供应商」。";
+        StatusText.Text = $"已移除模型 {row.Slug}。改动会在下次「应用并重启 Codex」时自动保存并生效。";
     }
 
     /// <summary>
@@ -803,42 +803,21 @@ public partial class ProviderPage : UserControl
 
     // ---------- 公开动作（由宿主工具栏调用）----------
 
-    /// <summary>保存供应商定义与（若填写了）API Key。</summary>
-    public async Task<bool> SaveAsync()
+    /// <summary>
+    /// 校验当前编辑并落盘：供应商定义 +（若填写了）API Key。
+    ///
+    /// <para>没有独立的「保存」按钮了——这里只被「应用并重启 Codex」在切换前调用。
+    /// 原来的两步（先点保存再点应用）是个坑：忘了点保存，应用读到的是磁盘上的
+    /// 旧定义，屏幕上的修改被静默忽略，用户完全看不出原因。</para>
+    /// </summary>
+    /// <returns>false 表示校验失败（原因已写进状态栏），调用方必须中止后续动作。</returns>
+    public async Task<bool> SaveBeforeApplyAsync()
     {
-        Detail_Changed(this, new RoutedEventArgs());
-
-        foreach (var provider in _providers) provider.Normalize();
-        var duplicate = _providers
-            .GroupBy(p => p.Id, StringComparer.OrdinalIgnoreCase)
-            .FirstOrDefault(g => g.Count() > 1);
-        if (duplicate is not null)
+        var error = ValidateEdits();
+        if (error is not null)
         {
-            StatusText.Text = $"供应商 ID 重复：{duplicate.Key}。每个供应商的 ID 必须唯一。";
-            return false;
-        }
-
-        if (_providers.Any(p => string.IsNullOrWhiteSpace(p.Id)))
-        {
-            StatusText.Text = "有供应商的 ID 为空，请填写。";
-            return false;
-        }
-
-        // 没有模型的供应商根本切不过去（ApplyThirdParty 会拒绝），
-        // 早点拦住比留一个看起来配好、实则不可用的条目强。
-        var modelLess = _providers.FirstOrDefault(p => p.Models.Count == 0);
-        if (modelLess is not null)
-        {
-            StatusText.Text = $"供应商「{modelLess.DisplayName}」还没有模型，请在模型列表里至少填一行。";
-            return false;
-        }
-
-        var badUrl = _providers.FirstOrDefault(p =>
-            !Uri.TryCreate(p.BaseUrl, UriKind.Absolute, out var uri) ||
-            (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps));
-        if (badUrl is not null)
-        {
-            StatusText.Text = $"供应商「{badUrl.DisplayName}」的 Base URL 必须是完整的 http:// 或 https:// 地址。";
+            StatusText.Text = error;
+            StatusChanged?.Invoke(this, error);
             return false;
         }
 
@@ -863,10 +842,38 @@ public partial class ProviderPage : UserControl
             UpdateKeySummary(selected.Id);
         }
 
-        StatusText.Text = "已保存。";
         RefreshProviderList(_selectedId);
-        StatusChanged?.Invoke(this, "供应商已保存。");
         return true;
+    }
+
+    /// <summary>把输入框同步进模型并做全部校验（不写盘）。返回错误文案，通过则返回 null。</summary>
+    private string? ValidateEdits()
+    {
+        Detail_Changed(this, new RoutedEventArgs());
+
+        foreach (var provider in _providers) provider.Normalize();
+        var duplicate = _providers
+            .GroupBy(p => p.Id, StringComparer.OrdinalIgnoreCase)
+            .FirstOrDefault(g => g.Count() > 1);
+        if (duplicate is not null)
+            return $"供应商 ID 重复：{duplicate.Key}。每个供应商的 ID 必须唯一。";
+
+        if (_providers.Any(p => string.IsNullOrWhiteSpace(p.Id)))
+            return "有供应商的 ID 为空，请填写。";
+
+        // 没有模型的供应商根本切不过去（ApplyThirdParty 会拒绝），
+        // 早点拦住比留一个看起来配好、实则不可用的条目强。
+        var modelLess = _providers.FirstOrDefault(p => p.Models.Count == 0);
+        if (modelLess is not null)
+            return $"供应商「{modelLess.DisplayName}」还没有模型，请在模型列表里至少填一行。";
+
+        var badUrl = _providers.FirstOrDefault(p =>
+            !Uri.TryCreate(p.BaseUrl, UriKind.Absolute, out var uri) ||
+            (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps));
+        if (badUrl is not null)
+            return $"供应商「{badUrl.DisplayName}」的 Base URL 必须是完整的 http:// 或 https:// 地址。";
+
+        return null;
     }
 
     private string CurrentKeyInput() => _keyRevealed ? ApiKeyPlainBox.Text : ApiKeyBox.Password;
@@ -875,7 +882,11 @@ public partial class ProviderPage : UserControl
     {
         try
         {
-            var preview = await _service.PreviewAsync(_selectedId);
+            // 预览也照当前屏幕上的编辑来：先把输入框同步进模型，再按内存里的定义预览。
+            // 走磁盘（注册表）会拿到上一次保存的旧定义，和"应用前自动保存"的语义对不上。
+            Detail_Changed(this, new RoutedEventArgs());
+            foreach (var provider in _providers) provider.Normalize();
+            var preview = await _service.PreviewAsync(Selected);
             var window = new PreviewWindow(preview, _service.ConfigPath, Window.GetWindow(this));
             window.ShowDialog();
         }
@@ -928,6 +939,11 @@ public partial class ProviderPage : UserControl
                     return;
                 }
 
+                // 先校验+落盘当前编辑，再切换。没有独立的「保存」按钮了——
+                // 曾经的两步（先保存再应用）是个坑：忘了保存，应用读到磁盘上的
+                // 旧定义，屏幕上的修改被静默忽略。
+                if (!await SaveBeforeApplyAsync()) return;
+
                 var searchNote = provider.SupportsWebSearch
                     ? "联网搜索：保留你的设置。"
                     : "联网搜索：该端点不支持，切换后会关掉（切回官方时自动还原你的原设置）。";
@@ -954,6 +970,10 @@ public partial class ProviderPage : UserControl
             }
             else
             {
+                // 切回官方虽不用供应商定义，但屏幕上的编辑若还没落盘会被静默丢掉。
+                // 尽力保存（校验失败不阻塞切换——切回官方不需要这些数据）。
+                await SaveBeforeApplyAsync();
+
                 var confirm = MessageBox.Show(
                     "切回官方模式并重启 Codex？\n\nconfig.toml 会还原成你原来的内容，官方模型列表恢复，无需重新登录。",
                     "切换模式", MessageBoxButton.OKCancel, MessageBoxImage.Question);

@@ -85,16 +85,19 @@
             <TextBlock x:Name="AddStatus" TextWrapping="Wrap" Margin="0,14,0,0" Visibility="Collapsed"/>
 
             <!-- 编辑模式的按钮 -->
-            <StackPanel x:Name="EditButtons" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,24,0,0">
+            <StackPanel x:Name="EditButtons" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,24,0,0" Visibility="Collapsed">
                 <Button Content="取消" Width="88" Margin="0,0,10,0" Style="{StaticResource ModernButton}" IsCancel="True"/>
                 <Button Content="保存" Width="88" Style="{StaticResource PrimaryButton}" IsDefault="True" Click="Save_Click"/>
             </StackPanel>
 
-            <!-- 手动添加页的按钮 -->
+            <!-- 手动添加页的按钮。两个保存分工明确：
+                 「保存」= 存下并关闭（与编辑窗口的「保存」同语义）；
+                 「保存并添加」= 存下后清空表单继续录下一个。 -->
             <StackPanel x:Name="ManualButtons" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,24,0,0" Visibility="Collapsed">
                 <Button Content="清空表单" Width="88" Margin="0,0,10,0" Style="{StaticResource ModernButton}" Click="ClearForm_Click"/>
                 <Button Content="关闭" Width="88" Margin="0,0,10,0" Style="{StaticResource ModernButton}" IsCancel="True"/>
-                <Button x:Name="SaveAndAddButton" Content="保存并添加" Width="106" Style="{StaticResource PrimaryButton}" IsDefault="True" Click="SaveAndAdd_Click"/>
+                <Button x:Name="SaveAndAddButton" Content="保存并添加" Width="106" Margin="0,0,10,0" Style="{StaticResource ModernButton}" Click="SaveAndAdd_Click"/>
+                <Button x:Name="SaveCloseButton" Content="保存" Width="88" Style="{StaticResource PrimaryButton}" IsDefault="True" Click="Save_Click"/>
             </StackPanel>
 
             <!-- 批量导入页的按钮 -->

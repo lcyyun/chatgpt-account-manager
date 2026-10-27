@@ -210,10 +210,6 @@
 
                 <!-- 第三方页工具栏 -->
                 <StackPanel x:Name="ThirdPartyToolbar" Orientation="Horizontal" Visibility="Collapsed">
-                    <Button Command="{Binding SaveProviderCommand}" Style="{StaticResource PrimaryButton}" Margin="0,0,8,0"
-                            AutomationProperties.Name="保存供应商" AutomationProperties.AutomationId="SaveProviderButton">
-                        <TextBlock Text="保存供应商"/>
-                    </Button>
                     <Button Command="{Binding PreviewProviderCommand}" Style="{StaticResource ToolbarButton}"
                             AutomationProperties.Name="预览配置" AutomationProperties.AutomationId="PreviewProviderButton">
                         <StackPanel Orientation="Horizontal"><Viewbox Width="18" Height="18" Margin="0,0,7,0"><Path Data="{StaticResource IconEye}" Fill="{DynamicResource TextBrush}"/></Viewbox><TextBlock Text="预览配置"/></StackPanel>
