@@ -9,6 +9,9 @@ public interface IUiService
 {
     void CopyText(string text);
     bool Confirm(string title, string message);
+
+    /// <summary>中性询问（问号图标，Yes / No）——「打开下载页？」这类非破坏性确认。</summary>
+    bool Ask(string title, string message);
     void Info(string title, string message);
 
     /// <summary>选择要导入的文件。对话框默认打开 <paramref name="initialDirectory"/> 并预选最新文件。</summary>
@@ -16,6 +19,9 @@ public interface IUiService
 
     /// <summary>在资源管理器中打开目录并选中指定文件（文件不存在时只打开目录）。</summary>
     void RevealInExplorer(string path);
+
+    /// <summary>用系统默认浏览器打开 URL（检查更新的下载入口用）。</summary>
+    void OpenUrl(string url);
 }
 
 public sealed class WpfUiService : IUiService
@@ -27,6 +33,9 @@ public sealed class WpfUiService : IUiService
 
     public bool Confirm(string title, string message) =>
         MessageBox.Show(message, title, MessageBoxButton.YesNo, MessageBoxImage.Warning) == MessageBoxResult.Yes;
+
+    public bool Ask(string title, string message) =>
+        MessageBox.Show(message, title, MessageBoxButton.YesNo, MessageBoxImage.Question) == MessageBoxResult.Yes;
 
     public void Info(string title, string message) =>
         MessageBox.Show(message, title, MessageBoxButton.OK, MessageBoxImage.Information);
@@ -68,6 +77,18 @@ public sealed class WpfUiService : IUiService
         catch
         {
             // 打开资源管理器失败不应影响主流程。
+        }
+    }
+
+    public void OpenUrl(string url)
+    {
+        try
+        {
+            Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
+        }
+        catch
+        {
+            // 浏览器打不开不影响主流程。
         }
     }
 }

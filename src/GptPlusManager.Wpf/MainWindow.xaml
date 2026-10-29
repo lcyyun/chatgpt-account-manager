@@ -225,6 +225,11 @@
                 </StackPanel>
 
                 <StackPanel Grid.Column="2" Orientation="Horizontal">
+                    <Button Command="{Binding CheckUpdateCommand}" Style="{StaticResource ToolbarButton}"
+                            AutomationProperties.Name="检查更新" AutomationProperties.AutomationId="CheckUpdateButton"
+                            ToolTip="对比 GitHub 上的最新版本">
+                        <StackPanel Orientation="Horizontal"><Viewbox Width="18" Height="18" Margin="0,0,7,0"><Path Data="{StaticResource IconDownload}" Fill="{DynamicResource TextBrush}"/></Viewbox><TextBlock Text="检查更新"/></StackPanel>
+                    </Button>
                     <Button Command="{Binding ToggleThemeCommand}" Style="{StaticResource ToolbarButton}"
                             AutomationProperties.Name="切换日间夜间模式" AutomationProperties.AutomationId="ThemeToggle">
                         <StackPanel Orientation="Horizontal"><Viewbox Width="18" Height="18" Margin="0,0,7,0"><Path Data="{StaticResource IconSun}" Fill="{DynamicResource AmberBrush}"/></Viewbox><TextBlock Text="{Binding ThemeLabel}"/></StackPanel>

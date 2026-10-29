@@ -1,11 +1,13 @@
 using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.IO;
+using System.Reflection;
 using System.Windows.Data;
 using System.Windows.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using GptPlusManager.Core.Codex;
+using GptPlusManager.Core.Network;
 using GptPlusManager.Core.Services;
 using GptPlusManager.Wpf.Infrastructure;
 using GptPlusManager.Wpf.Services;
@@ -38,6 +40,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         RestartCodexCommand = new AsyncRelayCommand(RestartCodexAsync, () => !IsBusy);
         ToggleKeepAliveCommand = new AsyncRelayCommand(ToggleKeepAliveAsync, () => !IsBusy);
         ToggleThemeCommand = new RelayCommand(ToggleTheme);
+        CheckUpdateCommand = new AsyncRelayCommand(() => CheckUpdateAsync(interactive: true), () => !IsBusy);
         ThemeLabel = ThemeService.ThemeLabel;
         _clock = new DispatcherTimer(TimeSpan.FromSeconds(1), DispatcherPriority.Background, OnClockTick, Dispatcher.CurrentDispatcher);
         _clock.Start();
@@ -120,6 +123,9 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     public IAsyncRelayCommand ToggleKeepAliveCommand { get; }
     public IRelayCommand ToggleThemeCommand { get; }
 
+    /// <summary>与 GitHub Releases 对比版本，发现新版给出下载入口。</summary>
+    public IAsyncRelayCommand CheckUpdateCommand { get; }
+
     partial void OnSearchTextChanged(string value) { AccountsView.Refresh(); NotifyCounts(); OnPropertyChanged(nameof(CanReorder)); }
     partial void OnIsBusyChanged(bool value)
     {
@@ -129,7 +135,8 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         RestoreConfigCommand.NotifyCanExecuteChanged();
         ApplyProviderCommand.NotifyCanExecuteChanged();
         QueryAllCommand.NotifyCanExecuteChanged(); RestartCodexCommand.NotifyCanExecuteChanged();
-        ToggleKeepAliveCommand.NotifyCanExecuteChanged(); OnPropertyChanged(nameof(CanReorder));
+        ToggleKeepAliveCommand.NotifyCanExecuteChanged(); CheckUpdateCommand.NotifyCanExecuteChanged();
+        OnPropertyChanged(nameof(CanReorder));
     }
 
     partial void OnIsKeepAliveEnabledChanged(bool value) => OnPropertyChanged(nameof(KeepAliveText));
@@ -207,6 +214,73 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
             StatusText = $"{Accounts.Count} 个账号 · 数据已从现有目录加载";
             QueryAllCommand.NotifyCanExecuteChanged();
         }, null);
+
+        // 启动后静默检查一次更新：只在确有新版时提示，失败不打扰。
+        _ = RunStartupUpdateCheckAsync();
+    }
+
+    /// <summary>启动时的静默更新检查。任何结果都不抛出、失败不打扰。</summary>
+    private async Task RunStartupUpdateCheckAsync()
+    {
+        try
+        {
+            // 等界面完全起来再查，别抢启动时的状态提示。
+            await Task.Delay(TimeSpan.FromSeconds(5));
+            await CheckUpdateAsync(interactive: false);
+        }
+        catch
+        {
+            // 静默检查永远不打扰用户。
+        }
+    }
+
+    /// <summary>
+    /// 检查更新：与 GitHub Releases 对比当前版本。
+    ///
+    /// <para><paramref name="interactive"/>=true 是用户点按钮——三种结果都要给反馈；
+    /// false 是启动时的静默检查——只在确有新版本时提示。</para>
+    /// </summary>
+    private async Task CheckUpdateAsync(bool interactive)
+    {
+        var current = CurrentVersionString();
+        var result = await new UpdateChecker().CheckAsync(current);
+
+        if (!result.IsSuccess)
+        {
+            if (interactive) ShowToast("检查更新失败：" + result.Error, true);
+            return;
+        }
+
+        if (!result.UpdateAvailable)
+        {
+            if (interactive) ShowToast($"已是最新版本（{current}）", false);
+            return;
+        }
+
+        if (!interactive)
+        {
+            ShowToast($"发现新版本 {result.LatestVersion}（当前 {current}），点「检查更新」下载", false);
+            return;
+        }
+
+        var message = $"发现新版本 {result.LatestVersion}（当前 {current}）"
+            + (result.PublishedAt.HasValue ? $"，发布于 {result.PublishedAt:yyyy-MM-dd}" : string.Empty)
+            + "\n\n打开下载页？";
+        if (result.ReleaseUrl is not null && _ui.Ask("检查更新", message))
+        {
+            _ui.OpenUrl(result.ReleaseUrl);
+        }
+    }
+
+    /// <summary>当前程序版本（InformationalVersion 去掉构建元数据，如 0.7.1+abc → 0.7.1）。</summary>
+    private static string CurrentVersionString()
+    {
+        var asm = System.Reflection.Assembly.GetExecutingAssembly();
+        var v = asm.GetCustomAttribute<System.Reflection.AssemblyInformationalVersionAttribute>()?.InformationalVersion
+            ?? asm.GetName().Version?.ToString()
+            ?? "0.0.0";
+        var plus = v.IndexOf('+');
+        return plus >= 0 ? v[..plus] : v;
     }
 
     private void OpenExportsFolder() => _ui.RevealInExplorer(_service.ExportsDirectory);
